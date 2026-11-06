@@ -41,7 +41,7 @@ die() {
 [ -f "$CERT" ] || die "client certificate not found: $CERT"
 [ -f "$KEY" ] || die "client key not found: $KEY"
 
-for cmd in curl gzip install; do
+for cmd in curl gzip uname mktemp; do
     command -v "$cmd" >/dev/null 2>&1 || die "missing required command: $cmd"
 done
 
@@ -63,13 +63,17 @@ echo "[2/4] verifying and installing binary"
 gzip -t "$TMP/sb.gz" || die "downloaded archive is corrupt"
 gzip -dc "$TMP/sb.gz" > "$TMP/sb"
 chmod 755 "$TMP/sb"
-install -m 755 "$TMP/sb" "$BIN"
+# busybox 没有 coreutils 的 install，用 cp + chmod
+cp "$TMP/sb" "$BIN"
+chmod 755 "$BIN"
 "$BIN" version >/dev/null 2>&1 || die "installed binary failed to run (arch/libc mismatch?)"
 
 echo "[3/4] installing client certificate and config"
 mkdir -p "$CONF_DIR"
-install -m 644 "$CERT" "$CONF_DIR/client.pem"
-install -m 600 "$KEY" "$CONF_DIR/client.key"
+cp "$CERT" "$CONF_DIR/client.pem"
+chmod 644 "$CONF_DIR/client.pem"
+cp "$KEY" "$CONF_DIR/client.key"
+chmod 600 "$CONF_DIR/client.key"
 
 cat > "$CONF_DIR/client.json" <<EOF
 {
