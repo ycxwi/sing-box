@@ -390,6 +390,35 @@ function api_dispatch()
 		return
 	end
 
+	-- 连通性检测（PassWall2 同款三卡）：直连走系统路由（=分流规则），百度验直连链路、谷歌/GitHub 验代理链路
+	if op == "conncheck" then
+		local t = http.formvalue("target") or ""
+		local urls = {
+			baidu = "https://www.baidu.com",
+			google = "https://www.google.com/generate_204",
+			github = "https://github.com",
+		}
+		local u = urls[t]
+		if not u then
+			http.write(jsonc.stringify({ ok = false, error = "非法目标: " .. t }))
+			return
+		end
+		local out = sys.exec(string.format(
+			"curl -o /dev/null -s -w '%%{http_code} %%{time_total}' --max-time 8 '%s'", u)) or ""
+		local code, ts = out:match("^(%d+)%s+([%d%.]+)$")
+		if code and ts and tonumber(code) >= 200 and tonumber(code) < 400 then
+			http.write(jsonc.stringify({
+				ok = true,
+				target = t,
+				code = tonumber(code),
+				ms = string.format("%.2f", tonumber(ts) * 1000),
+			}))
+		else
+			http.write(jsonc.stringify({ ok = false, target = t, error = (out ~= "" and out or "无输出") }))
+		end
+		return
+	end
+
 	-- 从服务端给的安装链接拉包并安装（一次性 URL：下载即删，服务端不常开接口）
 	if op == "install_url" then
 		local url = http.formvalue("url") or ""

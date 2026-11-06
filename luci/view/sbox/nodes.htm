@@ -5,6 +5,30 @@
 <div class="cbi-section">
 	<div class="cbi-section-node">
 		<div id="sbx-status" style="margin-bottom:8px;color:#666">加载中…</div>
+		<!-- 连通性三卡（PassWall2 同款语义）：百度=直连链路，谷歌/GitHub=代理链路；点卡片测该目标 -->
+		<div id="sbx-cc" style="display:flex;gap:16px;margin:6px 0 12px">
+			<div class="sbx-cc" data-t="baidu" style="flex:1;display:flex;align-items:center;background:#fff;border:1px solid #e8ebf0;border-radius:8px;padding:12px 14px;cursor:pointer;user-select:none">
+				<div style="font-size:26px;margin-right:12px;line-height:1">🐾</div>
+				<div style="flex:1;background:#f2f4f8;border-radius:6px;padding:7px 12px">
+					<div style="color:#8a93a3;font-size:13px">百度连接</div>
+					<div class="sbx-cc-v" style="color:#d9534f;font-size:15px;font-weight:600;margin-top:2px">点我检测</div>
+				</div>
+			</div>
+			<div class="sbx-cc" data-t="google" style="flex:1;display:flex;align-items:center;background:#fff;border:1px solid #e8ebf0;border-radius:8px;padding:12px 14px;cursor:pointer;user-select:none">
+				<div style="font-size:24px;margin-right:12px;line-height:1;font-weight:800;color:#4285F4">G</div>
+				<div style="flex:1;background:#f2f4f8;border-radius:6px;padding:7px 12px">
+					<div style="color:#8a93a3;font-size:13px">谷歌连接</div>
+					<div class="sbx-cc-v" style="color:#d9534f;font-size:15px;font-weight:600;margin-top:2px">点我检测</div>
+				</div>
+			</div>
+			<div class="sbx-cc" data-t="github" style="flex:1;display:flex;align-items:center;background:#fff;border:1px solid #e8ebf0;border-radius:8px;padding:12px 14px;cursor:pointer;user-select:none">
+				<div style="font-size:24px;margin-right:12px;line-height:1">🐙</div>
+				<div style="flex:1;background:#f2f4f8;border-radius:6px;padding:7px 12px">
+					<div style="color:#8a93a3;font-size:13px">GitHub连接</div>
+					<div class="sbx-cc-v" style="color:#d9534f;font-size:15px;font-weight:600;margin-top:2px">点我检测</div>
+				</div>
+			</div>
+		</div>
 		<style>
 			/* 主题有 table{width:100%} 全局规则；id 优先级覆盖它，让列宽按内容自适应 */
 			#sbx-table { border-collapse:collapse; font-size:13px; width:auto; }
@@ -223,6 +247,34 @@ function sbxInstallUrl(){
 			+ '\nPassWall2: ' + (d.pw2 || '');
 		sbxLoad();
 	}).catch(function(e){ out.textContent = '请求失败: ' + e; });
+}
+
+// 连通性卡片：点哪张测哪张（直连走系统路由=分流规则）
+(function(){
+	var wrap = document.getElementById('sbx-cc');
+	if(wrap) wrap.addEventListener('click', function(ev){
+		var card = ev.target.closest ? ev.target.closest('.sbx-cc') : null;
+		if(card) sbxConncheck(card);
+	});
+})();
+function sbxConncheck(card){
+	var t = card.getAttribute('data-t');
+	var v = card.querySelector('.sbx-cc-v');
+	if(!v || v.textContent === '检测中…'){ return; }
+	v.style.color = '#8a93a3';
+	v.textContent = '检测中…';
+	sbxPost({op:'conncheck', target:t}).then(function(d){
+		if(d.ok){
+			v.style.color = '#10B981';
+			v.textContent = d.ms + ' ms';
+		} else {
+			v.style.color = '#d9534f';
+			v.textContent = '失败 ' + (d.error || '');
+		}
+	}).catch(function(e){
+		v.style.color = '#d9534f';
+		v.textContent = '失败: ' + e;
+	});
 }
 
 // 一键测速：并发触发所有在线且启用节点的行内测速（复用 op=speedtest），结果逐格回填
