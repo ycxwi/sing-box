@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -163,11 +164,26 @@ func runQuickStart(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	quickPrintSummary(firstRun, base, cfgPath, statePath, clientCertPath, clientKeyPath, caCertPath, st)
+	quickPrintSummary(firstRun, len(args) == 2 && !firstRun, base, cfgPath, statePath, clientCertPath, clientKeyPath, caCertPath, st)
 
-	// 用生成的配置走标准 run 流程（configPaths 是 cmd.go 里的全局变量，run() 消费它）。
-	configPaths = []string{cfgPath}
-	return run()
+	// systemd 子进程（ExecStart 拉起）：直接跑服务本体。
+	if quickIsSystemdChild() {
+		configPaths = []string{cfgPath}
+		return run()
+	}
+
+	// 手动执行：确保 systemd 服务已安装并已启动，之后由服务接管，当前进程退出。
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("installing the systemd service requires root; re-run with sudo")
+	}
+	if err := quickEnsureService(cfgPath); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "\nsystemd service '%s' installed and started (auto-start on boot).\n", quickServiceName)
+	fmt.Fprintf(os.Stdout, "  status : systemctl status %s\n", quickServiceName)
+	fmt.Fprintf(os.Stdout, "  logs   : journalctl -u %s -f\n", quickServiceName)
+	fmt.Fprintf(os.Stdout, "  stop   : systemctl stop %s\n\n", quickServiceName)
+	return nil
 }
 
 func parseQuickPort(raw string) (int, error) {
@@ -274,6 +290,11 @@ func quickBuildConfig(st quickState, acmeDir, caPath string) map[string]any {
 						// ACME 未填 email 时 certmagic 会交互询问并阻塞启动；
 						// 零配置模式用域名派生一个占位地址（LE 只用于到期通知，不发验证信）。
 						"email": "admin@" + st.Domain,
+						// 环境不可控：80 端口可能被封、443/TCP 可能被占，都不是本程序能修复的。
+						// ACME 客户端同时登记 HTTP-01 与 TLS-ALPN-01，由 Let's Encrypt
+						// 依据服务端实际可达性选择——这是 RFC 8555 的标准多挑战协商，不是失败降级。
+						"disable_http_challenge":     false,
+						"disable_tls_alpn_challenge": false,
 					},
 					"client_authentication": "require-and-verify",
 					"client_certificate_path": caPath,
@@ -391,11 +412,66 @@ func writePEM(path, blockType string, der []byte, mode os.FileMode) error {
 	return nil
 }
 
-func quickPrintSummary(firstRun bool, base, cfgPath, statePath, certPath, keyPath, caPath string, st quickState) {
+const (
+	quickServiceName = "sing-box-quick"
+	quickServicePath = "/etc/systemd/system/sing-box-quick.service"
+)
+
+// quickIsSystemdChild 判断当前进程是否由 systemd 拉起（systemd 注入 INVOCATION_ID）。
+func quickIsSystemdChild() bool {
+	return os.Getenv("INVOCATION_ID") != ""
+}
+
+// quickEnsureService 安装并启用 systemd 服务（幂等）。
+//
+// 环境适配而非降级：手动执行时把生命周期交给 systemd（开机自启/崩溃重启由它负责）；
+// 由 systemd 拉起时直接跑服务本体。两条通道各自完整，不存在“失败回退”。
+func quickEnsureService(cfgPath string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve executable path: %w", err)
+	}
+	unit := fmt.Sprintf(`[Unit]
+Description=sing-box quick mode (TUIC + mTLS + ACME)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%s run -c %s
+Restart=always
+RestartSec=3
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+`, exe, cfgPath)
+
+	if current, readErr := os.ReadFile(quickServicePath); readErr != nil || string(current) != unit {
+		if writeErr := os.WriteFile(quickServicePath, []byte(unit), 0o644); writeErr != nil {
+			return fmt.Errorf("write %s: %w", quickServicePath, writeErr)
+		}
+	}
+	if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
+		return fmt.Errorf("systemctl daemon-reload: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("systemctl", "enable", quickServiceName).CombinedOutput(); err != nil {
+		return fmt.Errorf("systemctl enable %s: %w: %s", quickServiceName, err, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("systemctl", "start", quickServiceName).CombinedOutput(); err != nil {
+		return fmt.Errorf("systemctl start %s: %w: %s", quickServiceName, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func quickPrintSummary(firstRun, overwritten bool, base, cfgPath, statePath, certPath, keyPath, caPath string, st quickState) {
 	fmt.Fprintf(os.Stdout, "\n=== sing-box quick start ===\n")
-	if firstRun {
+	switch {
+	case firstRun:
 		fmt.Fprintf(os.Stdout, "first run: generated config + client CA + first client certificate\n")
-	} else {
+	case overwritten:
+		fmt.Fprintf(os.Stdout, "config overwritten with new domain/port (uuid and client CA preserved)\n")
+	default:
 		fmt.Fprintf(os.Stdout, "existing config reused (uuid and client CA preserved)\n")
 	}
 	fmt.Fprintf(os.Stdout, "base        : %s\n", base)
