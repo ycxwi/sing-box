@@ -79,6 +79,70 @@ systemctl stop sing-box-quick
 systemctl start sing-box-quick
 ```
 
+## 客户端（OpenWrt / iStoreOS 软路由）
+
+### 一键安装
+
+```sh
+curl -fsSL -o /tmp/sing-box-client.sh https://raw.githubusercontent.com/ycxwi/sing-box/main/client-install.sh
+sudo sh /tmp/sing-box-client.sh <server> <port> <uuid> <password> <cert> <key> [socks-port]
+```
+
+| 参数 | 说明 |
+|---|---|
+| `<server>` | 服务端域名（同时作为 TLS serverName） |
+| `<port>` | 服务端 TUIC 端口（UDP） |
+| `<uuid>` / `<password>` | 服务端首次启动打印的值 |
+| `<cert>` / `<key>` | 客户端证书与私钥（从服务端 `/etc/sing-box/client.pem` / `client.key` 拷来） |
+| `[socks-port]` | 本地 socks5 端口，默认 `1081` |
+
+安装结果：二进制 `/usr/bin/sbox-client`（**静态编译，musl libc 可用**）、配置 `/etc/sbox-client/client.json`、procd 服务 `sbox-client`（开机自启）、socks5 监听 `127.0.0.1:<socks-port>`。
+
+> 软路由是 musl libc，**必须用静态版二进制**（`sing-box-linux-amd64-static.gz`）。安装器已自动选择，无需手动指定。
+
+### 离线安装（软路由无外网时）
+
+```sh
+# 在能上网的机器上取静态二进制，拷到路由器
+scp sing-box-linux-amd64-static.gz root@<router>:/tmp/
+ssh root@<router> 'gunzip -c /tmp/sing-box-linux-amd64-static.gz > /tmp/sbox-static'
+# 用 SB_BINARY 跳过下载
+ssh root@<router> 'SB_BINARY=/tmp/sbox-static sh /tmp/sing-box-client.sh <server> <port> <uuid> <password> <cert> <key> 1081'
+```
+
+### 接入 PassWall2
+
+客户端只出 socks5，由 PassWall2 消费：
+
+| 字段 | 值 |
+|---|---|
+| 节点类型 | Socks |
+| 地址 | `127.0.0.1` |
+| 端口 | `<socks-port>` |
+
+然后把该节点设为**分流组的默认出口**（不要改全局节点，否则会连带切断本机对外访问）。
+
+### 客户端证书从哪来
+
+服务端首次启动会在 `/etc/sing-box/client.pem` 与 `client.key` 生成首张客户端证书：
+
+```sh
+scp root@<server>:/etc/sing-box/client.pem /tmp/
+scp root@<server>:/etc/sing-box/client.key /tmp/
+scp /tmp/client.pem root@<router>:/tmp/
+scp /tmp/client.key root@<router>:/tmp/
+```
+
+**加设备**：用服务端的 CA（`/etc/sing-box/client-ca.pem` + `client-ca.key`）再签一张客户端证书即可，服务端无需改动。
+
+### 客户端管理
+
+```sh
+/etc/init.d/sbox-client status
+/etc/init.d/sbox-client restart
+logread -f | grep sbox-client
+```
+
 ## 客户端配置
 
 服务启动后终端会打印客户端参数：
