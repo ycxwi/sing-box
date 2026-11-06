@@ -100,6 +100,8 @@ sudo sh /tmp/sing-box-client.sh <server> <port> <uuid> <password> <cert> <key> [
 
 > 软路由是 musl libc，**必须用静态版二进制**（`sing-box-linux-amd64-static.gz`）。安装器已自动选择，无需手动指定。
 
+> 服务托管依赖 procd，仅 OpenWrt/iStoreOS 具备。其它发行版（Debian/Ubuntu 等）上脚本会显式跳过托管并打印手动启动命令（`sbox-client run -c /etc/sbox-client/client.json`），不会另写 systemd 单元。
+
 ### 离线安装（软路由无外网时）
 
 ```sh
