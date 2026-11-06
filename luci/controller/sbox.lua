@@ -14,6 +14,7 @@ local NODES_DIR = "/etc/sbox-client/nodes"
 local DISABLED_DIR = "/etc/sbox-client/disabled"
 local INIT = "/etc/init.d/sbox-client"
 local INSTALL = "/usr/bin/sbox-client-install"
+local PW2_LOCK = "/var/lock/passwall2.lock"
 
 function index()
 	entry({"admin", "services", "sbox"}, alias("admin", "services", "sbox", "nodes"), _("Sing-Box 节点"), 60)
@@ -136,6 +137,50 @@ local function pw2_remove(name)
 	return false
 end
 
+-- 一次 uci show 扫出全部 nodes 段，避免逐节点反复 exec（软路由上 fork 很贵）
+local function pw2_table()
+	local rows = {}
+	local listing = sys.exec("uci show passwall2 2>/dev/null") or ""
+	for line in listing:gmatch("[^\r\n]+") do
+		local sec, opt, val = line:match("^passwall2%.([^=]+)%.([%w_%-]+)='(.*)'$")
+		if sec and opt then
+			rows[sec] = rows[sec] or {}
+			rows[sec][opt] = val
+		end
+	end
+	return rows
+end
+
+-- PassWall2 正在重建中（restart 会拿这把锁，典型耗时 1-4 分钟）
+local function pw2_restarting()
+	return fs.access(PW2_LOCK) and true or false
+end
+
+-- 当前生效节点（@global[0].node，存 section 名或 @nodes[N] 引用）
+local function pw2_current()
+	return (sys.exec("uci get passwall2.@global[0].node 2>/dev/null") or ""):gsub("%s+$", "")
+end
+
+-- 找节点对应的 PassWall2 section：先按 remarks 认领，再按 socks 端点认领
+-- （迁移前建的条目 remarks 是旧名，但 address:port 指向同一 socks 入口）
+local function pw2_find(rows, name, socks_port)
+	local remarks = "sbox-" .. name
+	for sec, f in pairs(rows) do
+		if f.remarks == remarks then
+			return sec
+		end
+	end
+	if socks_port and socks_port ~= 0 then
+		for sec, f in pairs(rows) do
+			if f.protocol == "socks" and f.address == "127.0.0.1"
+				and tostring(f.port) == tostring(socks_port) then
+				return sec
+			end
+		end
+	end
+	return nil
+end
+
 -- 从安装器输出里解析节点名与 socks 端口（比“猜最大端口”可靠），同步给 PassWall2
 local function sync_from_output(out)
 	if not out then
@@ -157,14 +202,20 @@ function api_dispatch()
 	if op == "list" then
 		local listen = listening_ports()
 		local nodes = read_nodes()
+		local rows = pw2_table()
+		local active_sec = pw2_current()
 		for _, n in ipairs(nodes) do
 			n.up = listen[n.socks] and true or false
 			n.enabled = not is_disabled(n.name)
+			n.pw2 = pw2_find(rows, n.name, n.socks)
+			n.active = (n.pw2 ~= nil and n.pw2 == active_sec)
 		end
+		local pw2_busy = pw2_restarting()
 		http.write(jsonc.stringify({
 			ok = true,
 			nodes = nodes,
 			service = service_state(),
+			pw2_restarting = pw2_busy,
 			nodes_dir = NODES_DIR,
 		}))
 		return
@@ -218,6 +269,60 @@ function api_dispatch()
 	if op == "restart" then
 		local out = sys.exec(INIT .. " restart 2>&1") or ""
 		http.write(jsonc.stringify({ ok = true, output = out, service = service_state() }))
+		return
+	end
+
+	-- 切换 PassWall2 当前生效节点（= 全局 @global[0].node）
+	if op == "activate" then
+		local name = http.formvalue("name") or ""
+		if not name:match("^[%w_%-]+$") then
+			http.write(jsonc.stringify({ ok = false, error = "非法节点名" }))
+			return
+		end
+		if not fs.access(NODES_DIR .. "/" .. name .. ".json") then
+			http.write(jsonc.stringify({ ok = false, error = "节点不存在: " .. name }))
+			return
+		end
+		if is_disabled(name) then
+			http.write(jsonc.stringify({ ok = false, error = "节点已禁用，先启用再激活" }))
+			return
+		end
+		local socks = 0
+		for _, n in ipairs(read_nodes()) do
+			if n.name == name then
+				socks = n.socks
+			end
+		end
+		local sec = pw2_find(pw2_table(), name, socks)
+		if not sec then
+			http.write(jsonc.stringify({ ok = false, error = "PassWall2 里没有这个节点，先重新保存一次以同步" }))
+			return
+		end
+		-- 匿名 section（@nodes[N]）改成稳定名：索引会随删节点漂移，名字不会
+		local target = sec
+		if sec:sub(1, 1) == "@" then
+			target = "sbox_" .. name
+			local rn = sys.exec("uci rename passwall2." .. sec .. "=" .. target .. " 2>&1") or ""
+			if not rn:match("^%s*$") then
+				http.write(jsonc.stringify({ ok = false, error = "重命名 PassWall2 节点失败", output = rn }))
+				return
+			end
+		end
+		local seterr = sys.exec("uci set passwall2.@global[0].node='" .. target .. "' 2>&1") or ""
+		if not seterr:match("^%s*$") then
+			http.write(jsonc.stringify({ ok = false, error = "写入 PassWall2 当前节点失败", output = seterr }))
+			return
+		end
+		sys.call("uci commit passwall2")
+		-- restart 同步跑要 1-4 分钟（app.sh start 里做 DNS/节点探测），必须后台化，
+		-- 否则 HTTP 请求扯死、页面一直转圈
+		sys.call("nohup /etc/init.d/passwall2 restart >/tmp/sbox-pw2-restart.log 2>&1 &")
+		http.write(jsonc.stringify({
+			ok = true,
+			section = target,
+			pending = true,
+			service = service_state(),
+		}))
 		return
 	end
 

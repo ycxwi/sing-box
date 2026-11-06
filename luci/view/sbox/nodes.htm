@@ -10,11 +10,14 @@
 			#sbx-table { border-collapse:collapse; font-size:13px; width:auto; }
 			#sbx-table th { text-align:left; padding:8px 10px; border-bottom:2px solid #e4e7ed; white-space:nowrap; color:#555; font-weight:600; }
 			#sbx-table td { padding:8px 10px; border-bottom:1px solid #eef0f3; text-align:left; vertical-align:middle; white-space:nowrap; }
-			#sbx-table td:first-child { font-weight:600; }
+			#sbx-table td:nth-child(2) { font-weight:600; }
+			#sbx-table input[type=radio] { width:16px; height:16px; margin:0; cursor:pointer; vertical-align:middle; }
+			#sbx-table input[type=radio]:disabled { cursor:not-allowed; }
 		</style>
 		<table id="sbx-table">
 			<thead>
 				<tr>
+					<th>激活</th>
 					<th>节点</th>
 					<th>服务器</th>
 					<th>远端端口</th>
@@ -24,7 +27,7 @@
 				</tr>
 			</thead>
 			<tbody id="sbx-body">
-				<tr><td colspan="6">加载中…</td></tr>
+				<tr><td colspan="7">加载中…</td></tr>
 			</tbody>
 		</table>
 		<div style="margin-top:10px">
@@ -102,13 +105,20 @@ function sbxLoad(){
 		.then(function(r){ return r.json(); })
 		.then(function(d){
 			if(!d.ok){
-				body.innerHTML = '<tr><td colspan="6" style="color:#c00">' + sbxEsc(d.error || '加载失败') + '</td></tr>';
+				body.innerHTML = '<tr><td colspan="7" style="color:#c00">' + sbxEsc(d.error || '加载失败') + '</td></tr>';
 				return;
 			}
-			document.getElementById('sbx-status').textContent =
-				'服务状态：' + (d.service || 'unknown') + '　节点目录：' + d.nodes_dir + '　共 ' + d.nodes.length + ' 个节点';
+			var stext = '服务状态：' + (d.service || 'unknown') + '　节点目录：' + d.nodes_dir + '　共 ' + d.nodes.length + ' 个节点';
+			if(d.pw2_restarting){
+				stext += '　<span style="color:#c80">PassWall2 重启中…</span>';
+			}
+			document.getElementById('sbx-status').innerHTML = stext;
+			clearTimeout(window.__sbxPoll);
+			if(d.pw2_restarting){
+				window.__sbxPoll = setTimeout(sbxLoad, 5000);
+			}
 			if(!d.nodes.length){
-				body.innerHTML = '<tr><td colspan="6">暂无节点</td></tr>';
+				body.innerHTML = '<tr><td colspan="7">暂无节点</td></tr>';
 				return;
 			}
 			var html = '';
@@ -127,7 +137,20 @@ function sbxLoad(){
 				var toggleBtn = n.enabled === false
 					? '<button class="cbi-button cbi-button-apply" onclick="sbxToggle(\'' + sbxEsc(n.name) + '\',\'enable\')">启用</button>'
 					: '<button class="cbi-button" onclick="sbxToggle(\'' + sbxEsc(n.name) + '\',\'disable\')">禁用</button>';
+				// PassWall2 全局只有一个生效节点，所以是单选：勾上即切过去
+				var radio = '';
+				if(n.enabled === false){
+					radio = '<input type="radio" disabled title="节点已禁用">';
+				} else if(!n.pw2){
+					radio = '<input type="radio" disabled title="PassWall2 里没有这个节点，重新保存一次以同步">';
+				} else {
+					radio = '<input type="radio" name="sbx-active"'
+						+ (n.active ? ' checked' : '')
+						+ ' onchange="sbxActivate(\'' + sbxEsc(n.name) + '\')"'
+						+ ' title="勾选后切到该节点">';
+				}
 				html += '<tr>'
+					+ '<td>' + radio + '</td>'
 					+ '<td><strong>' + sbxEsc(n.name) + '</strong></td>'
 					+ '<td>' + sbxEsc(n.server) + '</td>'
 					+ '<td>' + sbxEsc(n.port) + '</td>'
@@ -139,7 +162,7 @@ function sbxLoad(){
 			body.innerHTML = html;
 		})
 		.catch(function(e){
-			body.innerHTML = '<tr><td colspan="6" style="color:#c00">请求失败: ' + sbxEsc(e) + '</td></tr>';
+			body.innerHTML = '<tr><td colspan="7" style="color:#c00">请求失败: ' + sbxEsc(e) + '</td></tr>';
 		});
 }
 
@@ -194,6 +217,26 @@ function sbxInstallUrl(){
 			+ '\nPassWall2: ' + (d.pw2 || '');
 		sbxLoad();
 	}).catch(function(e){ out.textContent = '请求失败: ' + e; });
+}
+
+// 切 PassWall2 当前节点（单选，勾上即切）
+function sbxActivate(name){
+	if(!confirm('把 PassWall2 当前节点切到 ' + name + ' ？\n切换会重启 PassWall2，需 1-4 分钟，期间网络可能中断。')){
+		sbxLoad();
+		return;
+	}
+	sbxPost({op:'activate', name:name}).then(function(d){
+		if(d.ok){
+			alert('已切到 ' + name + (d.section ? ('（PassWall2 段 ' + d.section + '）') : '')
+				+ '\nPassWall2 正在后台重启，页面会自动刷新显示进度。');
+		} else {
+			alert('切换失败: ' + (d.error || d.output));
+		}
+		sbxLoad();
+	}).catch(function(e){
+		alert('切换请求失败: ' + e);
+		sbxLoad();
+	});
 }
 
 function sbxToggle(name, action){
