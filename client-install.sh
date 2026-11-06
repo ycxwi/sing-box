@@ -1,8 +1,10 @@
 #!/bin/sh
 # sing-box 客户端安装器（OpenWrt / iStoreOS 软路由版）
 #
-# 用法：
-#   sh client-install.sh <server> <port> <uuid> <password> <cert> <key> [socks-port]
+# 用法（两种）：
+#   无参： sh client-install.sh
+#          当前目录需有 client.json / client.pem / client.key（一次性 bundle 解包后）
+#   有参： sh client-install.sh <server> <port> <uuid> <password> <cert> <key> [socks-port]
 #
 # 参数：
 #   server      服务端域名（同时作为 TLS serverName）
@@ -51,6 +53,15 @@ else
     [ -f "$KEY" ] || die "client key not found: $KEY"
 fi
 [ "$(id -u)" -eq 0 ] || die "must run as root"
+
+# 平台判定：服务托管依赖 procd + /etc/rc.common，只有 OpenWrt/iStoreOS 具备。
+# 非 OpenWrt（Debian/Ubuntu 等）不写第二套 service 定义：装完二进制与配置后
+# 显式跳过托管，给出手动启动命令。
+if [ -f /etc/rc.common ] && command -v procd >/dev/null 2>&1; then
+    HAS_PROCD=1
+else
+    HAS_PROCD=0
+fi
 
 # 离线安装（SB_BINARY）不需要 curl；默认路径才要
 if [ -z "${SB_BINARY:-}" ]; then
@@ -145,6 +156,16 @@ fi
 
 "$BIN" check -c "$CONF_DIR/client.json" || die "generated config failed validation"
 
+# 无参模式参数不在命令行里，从 client.json 回读以便末尾回显（域名/端口/uuid）
+if [ "$MODE" = fromdir ]; then
+    SERVER=$(sed -n 's/.*"server": *"\([^"]*\)".*/\1/p' ./client.json | head -1)
+    PORT=$(sed -n 's/.*"server_port": *\([0-9]*\).*/\1/p' ./client.json | head -1)
+    UUID=$(sed -n 's/.*"uuid": *"\([^"]*\)".*/\1/p' ./client.json | head -1)
+    PASSWORD=$(sed -n 's/.*"password": *"\([^"]*\)".*/\1/p' ./client.json | head -1)
+    [ -n "$UUID" ] || die "cannot read uuid from ./client.json"
+fi
+
+if [ "$HAS_PROCD" -eq 1 ]; then
 echo "[4/4] installing procd service"
 cat > /etc/init.d/sbox-client <<'INIT'
 #!/bin/sh /etc/rc.common
@@ -185,9 +206,17 @@ sleep 2
 PORT_HEX=$(printf '%04X' "$SOCKS_PORT")
 grep -q ":${PORT_HEX} " /proc/net/tcp 2>/dev/null \
     || die "socks listener did not come up on port $SOCKS_PORT (checked /proc/net/tcp)"
+SERVICE_STATE="running, managed by procd"
+else
+echo "[4/4] skipped service setup: not OpenWrt/iStoreOS"
+echo "      reason: procd and /etc/rc.common not found on this system"
+echo "      binary + config are installed; start it manually:"
+echo "        $BIN run -c $CONF_DIR/client.json"
+SERVICE_STATE="installed, not started"
+fi
 
 echo
-echo "done. client running, socks5 = 127.0.0.1:$SOCKS_PORT"
+echo "done. client $SERVICE_STATE, socks5 = 127.0.0.1:$SOCKS_PORT"
 echo
 echo "client params (for reference / adding other devices):"
 echo "  server   = $SERVER"
@@ -200,7 +229,9 @@ echo "  节点类型：Socks"
 echo "  地址：127.0.0.1    端口：$SOCKS_PORT"
 echo "  在分流组里把该节点设为默认出口"
 echo
+if [ "$HAS_PROCD" -eq 1 ]; then
 echo "管理："
 echo "  /etc/init.d/sbox-client status"
 echo "  logread -f | grep sbox-client"
 echo "  /etc/init.d/sbox-client restart"
+fi
