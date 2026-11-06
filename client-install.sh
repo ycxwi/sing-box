@@ -266,6 +266,11 @@ start_service() {
 		[ -f "$cfg" ] || continue
 		base="${cfg%.json}"
 		name="${base##*/}"
+		# 手动禁用标记（/etc/sbox-client/disabled/<name>）——存在即不拉起该节点
+		if [ -f "/etc/sbox-client/disabled/$name" ]; then
+			echo "sbox-client: node $name is disabled, skipping" >&2
+			continue
+		fi
 		if [ ! -f "$base.pem" ] || [ ! -f "$base.key" ]; then
 			echo "sbox-client: node $name has no cert/key, skipping it" >&2
 			continue

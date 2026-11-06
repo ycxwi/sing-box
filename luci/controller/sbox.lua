@@ -11,6 +11,7 @@ local fs = require "nixio.fs"
 local sys = require "luci.sys"
 
 local NODES_DIR = "/etc/sbox-client/nodes"
+local DISABLED_DIR = "/etc/sbox-client/disabled"
 local INIT = "/etc/init.d/sbox-client"
 local INSTALL = "/usr/bin/sbox-client-install"
 
@@ -76,6 +77,11 @@ local function read_nodes()
 		return (a.socks or 0) < (b.socks or 0)
 	end)
 	return list
+end
+
+-- 禁用标记：存在 = 该节点不参与启动（init 脚本会跳过）
+local function is_disabled(name)
+	return fs.access(DISABLED_DIR .. "/" .. name) and true or false
 end
 
 local function service_state()
@@ -153,6 +159,7 @@ function api_dispatch()
 		local nodes = read_nodes()
 		for _, n in ipairs(nodes) do
 			n.up = listen[n.socks] and true or false
+			n.enabled = not is_disabled(n.name)
 		end
 		http.write(jsonc.stringify({
 			ok = true,
@@ -175,6 +182,36 @@ function api_dispatch()
 		local pw2 = pw2_remove(name)
 		local out = sys.exec(INIT .. " restart 2>&1") or ""
 		http.write(jsonc.stringify({ ok = true, pw2_removed = pw2, output = out }))
+		return
+	end
+
+	-- 手动启停：写/删禁用标记后重启服务（init 会跳过被禁用的节点）
+	if op == "toggle" then
+		local name = http.formvalue("name") or ""
+		local action = http.formvalue("action") or ""
+		if not name:match("^[%w_%-]+$") then
+			http.write(jsonc.stringify({ ok = false, error = "非法节点名" }))
+			return
+		end
+		if not fs.access(NODES_DIR .. "/" .. name .. ".json") then
+			http.write(jsonc.stringify({ ok = false, error = "节点不存在: " .. name }))
+			return
+		end
+		if action == "disable" then
+			sys.call("mkdir -p " .. DISABLED_DIR .. " && touch " .. DISABLED_DIR .. "/" .. name)
+		elseif action == "enable" then
+			sys.call("rm -f " .. DISABLED_DIR .. "/" .. name)
+		else
+			http.write(jsonc.stringify({ ok = false, error = "action 只能是 enable/disable" }))
+			return
+		end
+		local out = sys.exec(INIT .. " restart 2>&1") or ""
+		http.write(jsonc.stringify({
+			ok = true,
+			enabled = (action == "enable"),
+			output = out,
+			service = service_state(),
+		}))
 		return
 	end
 

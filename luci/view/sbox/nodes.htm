@@ -113,17 +113,27 @@ function sbxLoad(){
 			}
 			var html = '';
 			d.nodes.forEach(function(n){
-				var st = n.up ? '<span style="color:#0a0">在线</span>' : '<span style="color:#c00">离线</span>';
-				if(!n.has_pem || !n.has_key){
+				var st;
+				if(n.enabled === false){
+					st = '<span style="color:#999">已禁用</span>';
+				} else if(n.up){
+					st = '<span style="color:#0a0">在线</span>';
+				} else {
+					st = '<span style="color:#c00">离线</span>';
+				}
+				if(n.enabled !== false && (!n.has_pem || !n.has_key)){
 					st += ' <span style="color:#c00">(缺证书)</span>';
 				}
+				var toggleBtn = n.enabled === false
+					? '<button class="cbi-button cbi-button-apply" onclick="sbxToggle(\'' + sbxEsc(n.name) + '\',\'enable\')">启用</button>'
+					: '<button class="cbi-button" onclick="sbxToggle(\'' + sbxEsc(n.name) + '\',\'disable\')">禁用</button>';
 				html += '<tr>'
 					+ '<td><strong>' + sbxEsc(n.name) + '</strong></td>'
 					+ '<td>' + sbxEsc(n.server) + '</td>'
 					+ '<td>' + sbxEsc(n.port) + '</td>'
 					+ '<td>127.0.0.1:' + sbxEsc(n.socks) + '</td>'
 					+ '<td>' + st + '</td>'
-					+ '<td><button class="cbi-button cbi-button-remove" onclick="sbxDelete(\'' + sbxEsc(n.name) + '\')">删除</button></td>'
+					+ '<td>' + toggleBtn + ' <button class="cbi-button cbi-button-remove" onclick="sbxDelete(\'' + sbxEsc(n.name) + '\')">删除</button></td>'
 					+ '</tr>';
 			});
 			body.innerHTML = html;
@@ -184,6 +194,16 @@ function sbxInstallUrl(){
 			+ '\nPassWall2: ' + (d.pw2 || '');
 		sbxLoad();
 	}).catch(function(e){ out.textContent = '请求失败: ' + e; });
+}
+
+function sbxToggle(name, action){
+	var verb = action === 'disable' ? '禁用' : '启用';
+	var extra = action === 'disable' ? '\n禁用后该节点进程停止，socks 端口释放。' : '\n启用后该节点重新拉起。';
+	if(!confirm(verb + '节点 ' + name + ' ？' + extra)){ return; }
+	sbxPost({op:'toggle', name:name, action:action}).then(function(d){
+		alert(d.ok ? ('已' + verb) : ('失败: ' + (d.error || d.output)));
+		sbxLoad();
+	});
 }
 
 function sbxDelete(name){
