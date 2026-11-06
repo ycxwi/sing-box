@@ -149,6 +149,28 @@ PassWall2 里每个节点各建一个 Socks 节点（端口对应），在分流
 
 > 每个节点的证书只对**签发它的那台服务器**有效（各服务器 CA 独立）。换服务器要拿对应该服务器的包，不能拿 A 的证书连 B。
 
+### 节点管理页（LuCI）
+
+软路由上可加一个 LuCI 页统一管理节点（独立小应用，**不改 PassWall2**）：
+
+```sh
+scp -r luci/controller/sbox.lua root@<router>:/usr/lib/lua/luci/controller/
+scp -r luci/view/sbox/nodes.htm root@<router>:/usr/lib/lua/luci/view/sbox/
+scp client-install.sh root@<router>:/usr/bin/sbox-client-install
+ssh root@<router> 'chmod 755 /usr/lib/lua/luci/controller/sbox.lua /usr/bin/sbox-client-install; rm -f /tmp/luci-indexcache*; /etc/init.d/uhttpd restart'
+```
+
+入口：**服务 → Sing-Box 节点**
+
+| 能力 | 说明 |
+|---|---|
+| 列表 | 读 `/etc/sbox-client/nodes/*.json`，显示域名/远端端口/socks 端口/在线状态（判据=该 socks 端口在 `/proc/net/tcp` 处于 LISTEN） |
+| 新增 | 上传一次性包的三件（`client.json`/`client.pem`/`client.key`），复用 `client-install.sh`，自动分配端口 |
+| 删除 | 删 `nodes/<name>.*` 并重启服务 |
+| 同步 | 增删时自动维护 PassWall2 的 socks 节点（`remarks = sbox-<name>`），不用手填 |
+
+> 页面需要 LuCI 登录（同源 session），不提供任何免登录入口。
+
 ### 客户端证书从哪来
 
 服务端首次启动会在 `/etc/sing-box/client.pem` 与 `client.key` 生成首张客户端证书：

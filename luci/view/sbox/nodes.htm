@@ -1,0 +1,154 @@
+<%+header%>
+
+<h2 name="content">Sing-Box 节点</h2>
+
+<div class="cbi-section">
+	<div class="cbi-section-node">
+		<div id="sbx-status" style="margin-bottom:8px;color:#666">加载中…</div>
+		<table class="cbi-section-table" style="width:100%">
+			<thead>
+				<tr class="cbi-section-table-titles">
+					<th class="cbi-section-table-cell">节点</th>
+					<th class="cbi-section-table-cell">服务器</th>
+					<th class="cbi-section-table-cell">远端端口</th>
+					<th class="cbi-section-table-cell">socks</th>
+					<th class="cbi-section-table-cell">状态</th>
+					<th class="cbi-section-table-cell">操作</th>
+				</tr>
+			</thead>
+			<tbody id="sbx-body">
+				<tr><td colspan="6">加载中…</td></tr>
+			</tbody>
+		</table>
+		<div style="margin-top:10px">
+			<button class="cbi-button cbi-button-action" onclick="sbxRestart()">重启服务</button>
+			<button class="cbi-button" onclick="sbxLoad()">刷新</button>
+		</div>
+	</div>
+</div>
+
+<div class="cbi-section">
+	<h3>新增节点</h3>
+	<div class="cbi-section-node">
+		<p style="color:#666">上传一次性包解出的三件。安装器自动分配 socks 端口，并把该端口同步成 PassWall2 的一个 socks 节点。</p>
+		<form id="sbx-add-form" onsubmit="return sbxAdd(event)">
+			<div class="cbi-value">
+				<label class="cbi-value-title">client.json</label>
+				<div class="cbi-value-field"><input type="file" id="sbx-json" required></div>
+			</div>
+			<div class="cbi-value">
+				<label class="cbi-value-title">client.pem</label>
+				<div class="cbi-value-field"><input type="file" id="sbx-pem" required></div>
+			</div>
+			<div class="cbi-value">
+				<label class="cbi-value-title">client.key</label>
+				<div class="cbi-value-field"><input type="file" id="sbx-key" required></div>
+			</div>
+			<div class="cbi-page-actions">
+				<button class="cbi-button cbi-button-apply" type="submit">上传并安装</button>
+			</div>
+		</form>
+		<pre id="sbx-add-out" style="display:none;white-space:pre-wrap;background:#f5f5f5;padding:8px;margin-top:8px"></pre>
+	</div>
+</div>
+
+<script type="text/javascript">
+var SBX_API = '<%=luci.dispatcher.build_url("admin","services","sbox","api")%>';
+var SBX_TOKEN = '<%=token or ""%>';
+
+function sbxEsc(s){
+	return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+		return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+	});
+}
+
+function sbxLoad(){
+	var body = document.getElementById('sbx-body');
+	fetch(SBX_API + '?op=list&token=' + encodeURIComponent(SBX_TOKEN), {credentials:'same-origin'})
+		.then(function(r){ return r.json(); })
+		.then(function(d){
+			if(!d.ok){
+				body.innerHTML = '<tr><td colspan="6" style="color:#c00">' + sbxEsc(d.error || '加载失败') + '</td></tr>';
+				return;
+			}
+			document.getElementById('sbx-status').textContent =
+				'服务状态：' + (d.service || 'unknown') + '　节点目录：' + d.nodes_dir + '　共 ' + d.nodes.length + ' 个节点';
+			if(!d.nodes.length){
+				body.innerHTML = '<tr><td colspan="6">暂无节点</td></tr>';
+				return;
+			}
+			var html = '';
+			d.nodes.forEach(function(n){
+				var st = n.up ? '<span style="color:#0a0">在线</span>' : '<span style="color:#c00">离线</span>';
+				if(!n.has_pem || !n.has_key){
+					st += ' <span style="color:#c00">(缺证书)</span>';
+				}
+				html += '<tr class="cbi-section-table-row">'
+					+ '<td class="cbi-value"><strong>' + sbxEsc(n.name) + '</strong></td>'
+					+ '<td class="cbi-value">' + sbxEsc(n.server) + '</td>'
+					+ '<td class="cbi-value">' + sbxEsc(n.port) + '</td>'
+					+ '<td class="cbi-value">127.0.0.1:' + sbxEsc(n.socks) + '</td>'
+					+ '<td class="cbi-value">' + st + '</td>'
+					+ '<td class="cbi-value"><button class="cbi-button cbi-button-remove" onclick="sbxDelete(\'' + sbxEsc(n.name) + '\')">删除</button></td>'
+					+ '</tr>';
+			});
+			body.innerHTML = html;
+		})
+		.catch(function(e){
+			body.innerHTML = '<tr><td colspan="6" style="color:#c00">请求失败: ' + sbxEsc(e) + '</td></tr>';
+		});
+}
+
+function sbxPost(fields){
+	var fd = new FormData();
+	fd.append('token', SBX_TOKEN);
+	Object.keys(fields).forEach(function(k){ fd.append(k, fields[k]); });
+	return fetch(SBX_API, {method:'POST', body:fd, credentials:'same-origin'})
+		.then(function(r){ return r.json(); });
+}
+
+function sbxDelete(name){
+	if(!confirm('删除节点 ' + name + ' ？')){ return; }
+	sbxPost({op:'delete', name:name}).then(function(d){
+		alert(d.ok ? '已删除并重启服务' : ('失败: ' + (d.error || d.output)));
+		sbxLoad();
+	});
+}
+
+function sbxRestart(){
+	sbxPost({op:'restart'}).then(function(d){
+		alert(d.ok ? '已重启' : '重启失败');
+		sbxLoad();
+	});
+}
+
+function sbxAdd(ev){
+	ev.preventDefault();
+	var j = document.getElementById('sbx-json').files[0];
+	var p = document.getElementById('sbx-pem').files[0];
+	var k = document.getElementById('sbx-key').files[0];
+	if(!j || !p || !k){ alert('三个文件都要选'); return false; }
+	var fd = new FormData();
+	fd.append('token', SBX_TOKEN);
+	fd.append('op', 'add');
+	fd.append('json', j);
+	fd.append('pem', p);
+	fd.append('key', k);
+	var out = document.getElementById('sbx-add-out');
+	out.style.display = 'block';
+	out.textContent = '安装中…';
+	fetch(SBX_API, {method:'POST', body:fd, credentials:'same-origin'})
+		.then(function(r){ return r.json(); })
+		.then(function(d){
+			out.textContent = (d.ok ? 'OK' : 'FAILED') + '\n' + (d.output || '')
+				+ '\nPassWall2: ' + (d.pw2 || '');
+			sbxLoad();
+		})
+		.catch(function(e){ out.textContent = '请求失败: ' + e; });
+	return false;
+}
+
+sbxLoad();
+</script>
+
+<%+footer%>
