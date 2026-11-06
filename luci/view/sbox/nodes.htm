@@ -32,6 +32,7 @@
 			</tbody>
 		</table>
 		<div style="margin-top:10px">
+			<button class="cbi-button" id="sbx-speedall" onclick="sbxSpeedAll()">一键测速</button>
 			<button class="cbi-button cbi-button-action" onclick="sbxRestart()">重启服务</button>
 			<button class="cbi-button" onclick="sbxLoad()">刷新</button>
 		</div>
@@ -114,6 +115,7 @@ function sbxLoad(){
 				stext += '　<span style="color:#c80">PassWall2 重启中…</span>';
 			}
 			document.getElementById('sbx-status').innerHTML = stext;
+			window._sbxNodes = d.nodes;
 			clearTimeout(window.__sbxPoll);
 			if(d.pw2_restarting){
 				window.__sbxPoll = setTimeout(sbxLoad, 5000);
@@ -221,6 +223,29 @@ function sbxInstallUrl(){
 			+ '\nPassWall2: ' + (d.pw2 || '');
 		sbxLoad();
 	}).catch(function(e){ out.textContent = '请求失败: ' + e; });
+}
+
+// 一键测速：并发触发所有在线且启用节点的行内测速（复用 op=speedtest），结果逐格回填
+function sbxSpeedAll(){
+	var btn = document.getElementById('sbx-speedall');
+	if(btn && btn.disabled){ return; }
+	var nodes = (window._sbxNodes || []).filter(function(n){
+		return n.enabled !== false && n.up && document.getElementById('sbx-lat-' + n.name);
+	});
+	if(!nodes.length){ return; }
+	if(btn){ btn.disabled = true; btn.textContent = '测速中…'; }
+	nodes.forEach(function(n){ sbxSpeed(n.name); });
+	var done = 0;
+	nodes.forEach(function(n){
+		var check = setInterval(function(){
+			var c = document.getElementById('sbx-lat-' + n.name);
+			if(c && c.textContent !== '测…'){
+				clearInterval(check);
+				done++;
+				if(done === nodes.length && btn){ btn.disabled = false; btn.textContent = '一键测速'; }
+			}
+		}, 300);
+	});
 }
 
 // 单节点测速（无弹窗）：结果写进行内延迟格子，绿色=通，红色=失败原因
