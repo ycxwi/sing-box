@@ -174,6 +174,7 @@ ssh root@<router> 'chmod 755 /usr/lib/lua/luci/controller/sbox.lua /usr/bin/sbox
 | 测速 | 每节点「测速」按钮 + 「一键测速」：经各节点 socks 出口打 `https://www.gstatic.com/generate_204`，行内显示毫秒延迟（两位小数，绿色；失败红字原因），无弹窗；一键=并发触发所有在线且启用节点，测完按钮自动恢复 |
 | 连通卡 | 顶部三卡（百度/谷歌/GitHub）：直连走系统路由（=分流规则），点卡检测、卡右侧一键全测；百度验直连链路、谷歌/GitHub 验代理链路 |
 | 改名 | 行内改名（输入框+✓✗）：自动同步三文件重命名、json 内证书路径重写、禁用标记、PassWall2 remarks/section、auto 卡显示名，并重启服务 |
+| 流量统计 | 4 列（速度/今日/本小时/30天）：各节点 json 开回环 clash_api（9090+socks-1080，仅 127.0.0.1）；cron 每分钟快照聚合（`/usr/bin/sbox-traffic-sample` → `/etc/sbox-client/traffic/`）；页面经 uhttpd 内嵌 CGI（`/www/cgi-bin/sbox-traffic`，绕过 LuCI dispatcher）取数：snap JSON + live SSE 每秒推速率。口径：effective=历次重启累计基线+本进程累计；速度为秒级差分；30天保留 31 天滑动窗 |
 
 > 页面需要 LuCI 登录（同源 session），不提供任何免登录入口。
 

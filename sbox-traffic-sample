@@ -1,0 +1,98 @@
+#!/usr/bin/lua
+--[[ sbox 流量采样：每分钟拉各节点 clash_api 累计值，维护 日/小时/30天 聚合与速率。
+     crontab: * * * * * /usr/bin/sbox-traffic-sample
+     口径：effective = base(历次重启累计) + cur(本进程累计)；增量=本次-上次，负值(异常)丢弃。 ]]
+local jsonc = require "luci.jsonc"
+local fs = require "nixio.fs"
+
+local NODES_DIR = "/etc/sbox-client/nodes"
+local TDIR = "/etc/sbox-client/traffic"
+
+local function read_total(api_port)
+	local fh = io.popen("curl -s --max-time 3 http://127.0.0.1:" .. api_port .. "/connections 2>/dev/null")
+	local body = fh and fh:read("*a") or ""
+	if fh then fh:close() end
+	local obj = body ~= "" and jsonc.parse(body) or nil
+	if type(obj) == "table" then
+		return tonumber(obj.uploadTotal) or 0, tonumber(obj.downloadTotal) or 0
+	end
+	return nil, nil
+end
+
+fs.mkdirr(TDIR)
+local now = os.time()
+local day_key = os.date("%Y-%m-%d", now)
+local hour_key = os.date("%Y-%m-%dT%H", now)
+local cutoff = os.date("%Y-%m-%d", now - 31 * 86400)
+
+for name in fs.dir(NODES_DIR) do
+	if name:match("%.json$") then
+		local base = name:match("^(.*)%.json$")
+		local fh = io.open(NODES_DIR .. "/" .. name, "r")
+		if fh then
+			local cfg = jsonc.parse(fh:read("*a"))
+			fh:close()
+			local up, down = nil, nil
+			if cfg and cfg.inbounds and cfg.inbounds[1] and cfg.experimental and cfg.experimental.clash_api then
+				local api = cfg.experimental.clash_api.external_controller:match(":(%d+)$")
+				if api then up, down = read_total(api) end
+			end
+			if up then
+				local tf = TDIR .. "/" .. base .. ".json"
+				local st = { base_up = 0, base_down = 0, cur_api_up = 0, cur_api_down = 0,
+					eff_up = nil, eff_down = nil, cur_ts = now,
+					day = day_key, day_up = 0, day_down = 0,
+					hour = hour_key, hour_up = 0, hour_down = 0,
+					days = {}, rate_up = 0, rate_down = 0 }
+				local of = io.open(tf, "r")
+				if of then
+					local old = jsonc.parse(of:read("*a"))
+					of:close()
+					if type(old) == "table" then
+						for k, v in pairs(old) do st[k] = v end
+					end
+				end
+				-- 进程重启检测：本进程累计比上次小 → 上次并入基线
+				if up < (st.cur_api_up or 0) then
+					st.base_up = (st.base_up or 0) + (st.cur_api_up or 0)
+					st.base_down = (st.base_down or 0) + (st.cur_api_down or 0)
+				end
+				st.cur_api_up = up
+				st.cur_api_down = down
+				local eff_now_up = (st.base_up or 0) + up
+				local eff_now_down = (st.base_down or 0) + down
+				local d_up = (st.eff_up and (eff_now_up - st.eff_up)) or 0
+				local d_down = (st.eff_down and (eff_now_down - st.eff_down)) or 0
+				if d_up < 0 then d_up = 0 end
+				if d_down < 0 then d_down = 0 end
+				if st.day ~= day_key then st.day = day_key; st.day_up = 0; st.day_down = 0 end
+				if st.hour ~= hour_key then st.hour = hour_key; st.hour_up = 0; st.hour_down = 0 end
+				st.day_up = st.day_up + d_up
+				st.day_down = st.day_down + d_down
+				st.hour_up = st.hour_up + d_up
+				st.hour_down = st.hour_down + d_down
+				local dd = st.days[day_key] or { 0, 0 }
+				dd[1] = dd[1] + d_up
+				dd[2] = dd[2] + d_down
+				st.days[day_key] = dd
+				for k in pairs(st.days) do
+					if k < cutoff then st.days[k] = nil end
+				end
+				local dt = now - (st.cur_ts or now)
+				if dt > 0 and dt <= 300 then
+					st.rate_up = math.floor(d_up / dt)
+					st.rate_down = math.floor(d_down / dt)
+				else
+					st.rate_up = 0
+					st.rate_down = 0
+				end
+				st.eff_up = eff_now_up
+				st.eff_down = eff_now_down
+				st.cur_ts = now
+				of = io.open(tf, "w")
+				of:write(jsonc.stringify(st))
+				of:close()
+			end
+		end
+	end
+end

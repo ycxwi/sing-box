@@ -1,0 +1,99 @@
+#!/usr/bin/lua
+--[[ sbox-traffic CGI（uhttpd 内嵌小服务，绕过 LuCI dispatcher）：
+     op=snap  → JSON（各节点 30天/今日/本小时/速度，读 cron 快照聚合）
+     op=live  → SSE 每秒推各节点 {name,up,down} 速率（秒级差分），300 秒后结束由前端自动重连
+     只读匿名（LAN 侧）；所有写操作仍走 LuCI 登录态 controller。 ]]
+local jsonc = require "luci.jsonc"
+local nixio = require "nixio"
+local fs = require "nixio.fs"
+
+local TDIR = "/etc/sbox-client/traffic"
+local NODES_DIR = "/etc/sbox-client/nodes"
+
+local qs = os.getenv("QUERY_STRING") or ""
+local op = qs:match("op=([a-z]+)") or "snap"
+
+if op == "snap" then
+	io.write("Content-Type: application/json\r\nCache-Control: no-cache\r\n\r\n")
+	local out = {}
+	local ok, iter = pcall(fs.dir, TDIR)
+	if ok and iter then
+		for f in iter do
+			if f:match("%.json$") then
+				local fh = io.open(TDIR .. "/" .. f, "r")
+				if fh then
+					local st = jsonc.parse(fh:read("*a"))
+					fh:close()
+					if type(st) == "table" then
+						local d30 = 0
+						for _, v in pairs(st.days or {}) do
+							d30 = d30 + (v[1] or 0) + (v[2] or 0)
+						end
+						out[f:match("^(.*)%.json$")] = {
+							d30 = d30,
+							day = (st.day_up or 0) + (st.day_down or 0),
+							hour = (st.hour_up or 0) + (st.hour_down or 0),
+							rate = (st.rate_up or 0) + (st.rate_down or 0),
+						}
+					end
+				end
+			end
+		end
+	end
+	io.write(jsonc.stringify(out))
+	return
+end
+
+if op == "live" then
+	io.write("Content-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\n")
+	local map = {}
+	local okm, iterm = pcall(fs.dir, NODES_DIR)
+	if okm and iterm then
+		for f in iterm do
+			if f:match("%.json$") then
+				local fh = io.open(NODES_DIR .. "/" .. f, "r")
+				if fh then
+					local cfg = jsonc.parse(fh:read("*a"))
+					fh:close()
+					if type(cfg) == "table" and cfg.experimental and cfg.experimental.clash_api then
+						local api = cfg.experimental.clash_api.external_controller:match(":(%d+)$")
+						if api then
+							map[f:match("^(.*)%.json$")] = api
+						end
+					end
+				end
+			end
+		end
+	end
+	local prev = {}
+	for _ = 1, 300 do
+		local frame = {}
+		for name, api in pairs(map) do
+			local pf = io.popen("curl -s --max-time 2 http://127.0.0.1:" .. api .. "/connections 2>/dev/null")
+			local body = pf and pf:read("*a") or ""
+			if pf then pf:close() end
+			local obj = body ~= "" and jsonc.parse(body) or nil
+			if type(obj) == "table" then
+				local u = tonumber(obj.uploadTotal) or 0
+				local d = tonumber(obj.downloadTotal) or 0
+				local p = prev[name]
+				local du, dd = 0, 0
+				if p then
+					du = u - p[1]
+					dd = d - p[2]
+					if du < 0 then du = 0 end
+					if dd < 0 then dd = 0 end
+				end
+				prev[name] = { u, d }
+				frame[#frame + 1] = { name = name, up = du, down = dd }
+			end
+		end
+		io.write("data: " .. jsonc.stringify(frame) .. "\n\n")
+		io.flush()
+		nixio.nanosleep(1, 0)
+	end
+	return
+end
+
+io.write("Content-Type: application/json\r\n\r\n")
+io.write('{"error":"unknown op"}')

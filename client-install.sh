@@ -204,9 +204,15 @@ else
     fi
 fi
 
+# 每节点回环 clash_api 端口（与 socks 对齐：1080→9090 起）；流量统计用，仅 127.0.0.1
+API_PORT=$((9090 + SOCKS_PORT - 1080))
+
 cat > "$NODE_JSON" <<EOF
 {
   "log": { "level": "warn", "timestamp": true },
+  "experimental": {
+    "clash_api": { "external_controller": "127.0.0.1:$API_PORT" }
+  },
   "inbounds": [
     { "type": "socks", "tag": "socks-in", "listen": "127.0.0.1", "listen_port": $SOCKS_PORT }
   ],

@@ -51,11 +51,15 @@
 					<th>socks</th>
 					<th>状态</th>
 					<th>延迟</th>
+					<th>速度</th>
+					<th>今日</th>
+					<th>本小时</th>
+					<th>30天</th>
 					<th>操作</th>
 				</tr>
 			</thead>
 			<tbody id="sbx-body">
-				<tr><td colspan="8">加载中…</td></tr>
+				<tr><td colspan="12">加载中…</td></tr>
 			</tbody>
 		</table>
 		<div style="margin-top:10px">
@@ -128,13 +132,57 @@ function sbxEsc(s){
 	});
 }
 
+function sbxFmtBytes(n){
+	if(n >= 1073741824) return (n/1073741824).toFixed(2) + ' GB';
+	if(n >= 1048576) return (n/1048576).toFixed(1) + ' MB';
+	if(n >= 1024) return (n/1024).toFixed(1) + ' KB';
+	return n + ' B';
+}
+function sbxFmtRate(n){
+	if(n >= 1048576) return (n/1048576).toFixed(1) + ' MB/s';
+	if(n >= 1024) return (n/1024).toFixed(1) + ' KB/s';
+	return n + ' B/s';
+}
+
+// 流量快照（30天/今日/本小时）+ 实时速度（EventSource 每秒）
+function sbxTrafficLoad(){
+	fetch('/cgi-bin/sbox-traffic?op=snap', {credentials:'same-origin'})
+		.then(function(r){ return r.json(); })
+		.then(function(d){
+			Object.keys(d).forEach(function(name){
+				var e30 = document.getElementById('sbx-d30-' + name);
+				var eday = document.getElementById('sbx-day-' + name);
+				var ehour = document.getElementById('sbx-hour-' + name);
+				if(e30){ e30.textContent = sbxFmtBytes(d[name].d30 || 0); }
+				if(eday){ eday.textContent = sbxFmtBytes(d[name].day || 0); }
+				if(ehour){ ehour.textContent = sbxFmtBytes(d[name].hour || 0); }
+			});
+		}).catch(function(){});
+	if(!window._sbxEs){
+		var es = new EventSource('/cgi-bin/sbox-traffic?op=live');
+		es.onmessage = function(ev){
+			try{
+				JSON.parse(ev.data).forEach(function(it){
+					var cell = document.getElementById('sbx-rate-' + it.name);
+					if(cell){
+						var r = (it.up || 0) + (it.down || 0);
+						cell.textContent = sbxFmtRate(r);
+						cell.style.color = r > 0 ? '#0a0' : '#999';
+					}
+				});
+			}catch(e){}
+		};
+		window._sbxEs = es;
+	}
+}
+
 function sbxLoad(){
 	var body = document.getElementById('sbx-body');
 	fetch(SBX_API + '?op=list&token=' + encodeURIComponent(SBX_TOKEN), {credentials:'same-origin'})
 		.then(function(r){ return r.json(); })
 		.then(function(d){
 			if(!d.ok){
-				body.innerHTML = '<tr><td colspan="8" style="color:#c00">' + sbxEsc(d.error || '加载失败') + '</td></tr>';
+				body.innerHTML = '<tr><td colspan="12" style="color:#c00">' + sbxEsc(d.error || '加载失败') + '</td></tr>';
 				return;
 			}
 			var stext = '服务状态：' + (d.service || 'unknown') + '　节点目录：' + d.nodes_dir + '　共 ' + d.nodes.length + ' 个节点';
@@ -143,12 +191,13 @@ function sbxLoad(){
 			}
 			document.getElementById('sbx-status').innerHTML = stext;
 			window._sbxNodes = d.nodes;
+			sbxTrafficLoad();
 			clearTimeout(window.__sbxPoll);
 			if(d.pw2_restarting){
 				window.__sbxPoll = setTimeout(sbxLoad, 5000);
 			}
 			if(!d.nodes.length){
-				body.innerHTML = '<tr><td colspan="8">暂无节点</td></tr>';
+				body.innerHTML = '<tr><td colspan="12">暂无节点</td></tr>';
 				return;
 			}
 			var html = '';
@@ -187,6 +236,10 @@ function sbxLoad(){
 					+ '<td>127.0.0.1:' + sbxEsc(n.socks) + '</td>'
 					+ '<td>' + st + '</td>'
 					+ '<td id="sbx-lat-' + sbxEsc(n.name) + '" style="color:#999">—</td>'
+					+ '<td id="sbx-rate-' + sbxEsc(n.name) + '" style="color:#999">—</td>'
+					+ '<td id="sbx-day-' + sbxEsc(n.name) + '" style="color:#666">—</td>'
+					+ '<td id="sbx-hour-' + sbxEsc(n.name) + '" style="color:#666">—</td>'
+					+ '<td id="sbx-d30-' + sbxEsc(n.name) + '" style="color:#666">—</td>'
 					+ '<td>' + toggleBtn
 					+ ' <button class="cbi-button" onclick="sbxRename(\'' + sbxEsc(n.name) + '\')">改名</button>'
 					+ ' <button class="cbi-button" onclick="sbxSpeed(\'' + sbxEsc(n.name) + '\')">测速</button>'
@@ -196,7 +249,7 @@ function sbxLoad(){
 			body.innerHTML = html;
 		})
 		.catch(function(e){
-			body.innerHTML = '<tr><td colspan="8" style="color:#c00">请求失败: ' + sbxEsc(e) + '</td></tr>';
+			body.innerHTML = '<tr><td colspan="12" style="color:#c00">请求失败: ' + sbxEsc(e) + '</td></tr>';
 		});
 }
 
