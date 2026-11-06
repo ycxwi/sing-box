@@ -35,11 +35,22 @@ die() {
     exit 1
 }
 
-[ -n "$SERVER" ] && [ -n "$PORT" ] && [ -n "$UUID" ] && [ -n "$PASSWORD" ] && [ -n "$CERT" ] && [ -n "$KEY" ] \
-    || die "usage: client-install.sh <server> <port> <uuid> <password> <cert> <key> [socks-port]"
+# 两种模式：
+#   无参  = 从当前目录的 client.json/client.pem/client.key 直接安装（配合一次性 tar.gz 下载件）
+#   有参  = 传统方式，参数传入 + 证书路径
+if [ $# -eq 0 ]; then
+    MODE=fromdir
+    [ -f ./client.json ] || die "no args and ./client.json not found — cd into the extracted bundle dir, or pass the 6 params"
+    [ -f ./client.pem ] || die "client.pem missing beside client.json"
+    [ -f ./client.key ] || die "client.key missing beside client.json"
+else
+    MODE=params
+    [ -n "$SERVER" ] && [ -n "$PORT" ] && [ -n "$UUID" ] && [ -n "$PASSWORD" ] && [ -n "$CERT" ] && [ -n "$KEY" ] \
+        || die "usage: client-install.sh [<server> <port> <uuid> <password> <cert> <key> [socks-port]]"
+    [ -f "$CERT" ] || die "client certificate not found: $CERT"
+    [ -f "$KEY" ] || die "client key not found: $KEY"
+fi
 [ "$(id -u)" -eq 0 ] || die "must run as root"
-[ -f "$CERT" ] || die "client certificate not found: $CERT"
-[ -f "$KEY" ] || die "client key not found: $KEY"
 
 # 离线安装（SB_BINARY）不需要 curl；默认路径才要
 if [ -z "${SB_BINARY:-}" ]; then
@@ -81,11 +92,21 @@ chmod 755 "$BIN"
 
 echo "[3/4] installing client certificate and config"
 mkdir -p "$CONF_DIR"
-cp "$CERT" "$CONF_DIR/client.pem"
+if [ "$MODE" = fromdir ]; then
+    cp ./client.pem "$CONF_DIR/client.pem"
+    cp ./client.key "$CONF_DIR/client.key"
+else
+    cp "$CERT" "$CONF_DIR/client.pem"
+    cp "$KEY" "$CONF_DIR/client.key"
+fi
 chmod 644 "$CONF_DIR/client.pem"
-cp "$KEY" "$CONF_DIR/client.key"
 chmod 600 "$CONF_DIR/client.key"
 
+if [ "$MODE" = fromdir ]; then
+    echo "      using bundled client.json (params already baked in)"
+    cp ./client.json "$CONF_DIR/client.json"
+    chmod 600 "$CONF_DIR/client.json"
+else
 cat > "$CONF_DIR/client.json" <<EOF
 {
   "log": {
@@ -120,6 +141,7 @@ cat > "$CONF_DIR/client.json" <<EOF
   ]
 }
 EOF
+fi
 
 "$BIN" check -c "$CONF_DIR/client.json" || die "generated config failed validation"
 

@@ -57,6 +57,13 @@ openssl verify -CAfile "$CA" "$PEM" >/dev/null 2>&1 \
 openssl x509 -in "$PEM" -noout -subject -issuer -dates 2>/dev/null | sed 's/^/      /'
 
 # 打包成一次性下载件（固定文件名 client.pem / client.key，客户端直接解包可用）
+# 先读服务端参数（client.json 需要四件：domain/port/uuid/password）
+DOMAIN=$(sed -n 's/.*"domain": *"\([^"]*\)".*/\1/p' "$BASE/quick-state.json" | head -1)
+[ -n "$DOMAIN" ] || die "cannot read domain from $BASE/quick-state.json"
+TUIC_PORT=$(sed -n 's/.*"port": *\([0-9]*\).*/\1/p' "$BASE/quick-state.json" | head -1)
+UUID=$(sed -n 's/.*"uuid": *"\([^"]*\)".*/\1/p' "$BASE/quick-state.json" | head -1)
+PASSWORD=$(sed -n 's/.*"password": *"\([^"]*\)".*/\1/p' "$BASE/quick-state.json" | head -1)
+
 PENDING="$BASE/pending"
 mkdir -p "$PENDING"
 TOKEN=$(openssl rand -hex 16)
@@ -67,7 +74,37 @@ cp "$PEM" "$STAGE/client.pem"
 cp "$KEY" "$STAGE/client.key"
 chmod 644 "$STAGE/client.pem"
 chmod 600 "$STAGE/client.key"
-tar czf "$TARBALL" -C "$STAGE" client.pem client.key 2>/dev/null \
+
+# 带上初始化参数：直接生成客户端配置，证书路径按客户端布局（/etc/sbox-client）
+cat > "$STAGE/client.json" <<EOF
+{
+  "log": { "level": "warn", "timestamp": true },
+  "inbounds": [
+    { "type": "socks", "tag": "socks-in", "listen": "127.0.0.1", "listen_port": 1081 }
+  ],
+  "outbounds": [
+    {
+      "type": "tuic",
+      "tag": "tuic-out",
+      "server": "$DOMAIN",
+      "server_port": $TUIC_PORT,
+      "uuid": "$UUID",
+      "password": "$PASSWORD",
+      "congestion_control": "bbr",
+      "tls": {
+        "enabled": true,
+        "server_name": "$DOMAIN",
+        "alpn": ["h3"],
+        "client_certificate_path": "/etc/sbox-client/client.pem",
+        "client_key_path": "/etc/sbox-client/client.key"
+      }
+    }
+  ]
+}
+EOF
+chmod 600 "$STAGE/client.json"
+
+tar czf "$TARBALL" -C "$STAGE" client.pem client.key client.json 2>/dev/null \
     || die "failed to package $TARBALL"
 rm -rf "$STAGE"
 trap - EXIT INT TERM
@@ -77,23 +114,11 @@ echo
 echo "issued:"
 echo "  $PEM"
 echo "  $KEY"
-# 从 state 文件读服务端域名（busybox 无 jq，用 sed）
-DOMAIN=""
-if [ -f "$BASE/quick-state.json" ]; then
-    DOMAIN=$(sed -n 's/.*"domain": *"\([^"]*\)".*/\1/p' "$BASE/quick-state.json" | head -1)
-fi
-[ -n "$DOMAIN" ] || die "cannot read domain from $BASE/quick-state.json"
-
 PORT=8000
 if [ -f "$BASE/cert-port" ]; then
     P=$(tr -d ' \n' < "$BASE/cert-port")
     [ -n "$P" ] && PORT=$P
 fi
-
-# 读 TUIC 连接参数（客户端配置必需四件：server/uuid/password/port）
-TUIC_PORT=$(sed -n 's/.*"port": *\([0-9]*\).*/\1/p' "$BASE/quick-state.json" | head -1)
-UUID=$(sed -n 's/.*"uuid": *"\([^"]*\)".*/\1/p' "$BASE/quick-state.json" | head -1)
-PASSWORD=$(sed -n 's/.*"password": *"\([^"]*\)".*/\1/p' "$BASE/quick-state.json" | head -1)
 
 echo
 echo "client params (pass these to the device):"
@@ -103,8 +128,9 @@ echo "  uuid     = $UUID"
 echo "  password = $PASSWORD"
 
 echo
-echo "one-shot download (HTTPS, valid 30 min, single use):"
-echo "  https://$DOMAIN:$PORT/$TOKEN"
+echo "one-shot download (HTTPS, valid 30 min, single use)"
+echo "  contains: client.pem + client.key + client.json (params baked in)"
+echo "  url     : https://$DOMAIN:$PORT/$TOKEN"
 echo
 echo "or deploy with scp:"
 echo "  scp $PEM root@<device>:/tmp/client.pem"

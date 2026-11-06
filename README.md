@@ -146,12 +146,21 @@ sudo sh sign-client.sh
 | **一次性 HTTPS 下载** | `https://<server-domain>:8000/<token>` — 30 分内有效、**只能下一次**、下载即删；走 ACME 同一张真证书，私钥不经明文链路 |
 | scp | 传统方式，走 SSH 加密链路 |
 
-设备侧：
+设备侧（包内已带初始化参数，**无需再传参**）：
 
 ```sh
 curl -fsS -o /tmp/c.tgz <一次性URL>
-tar xzf /tmp/c.tgz -C /tmp/          # 包内固定为 client.pem / client.key
+mkdir -p /tmp/certs && tar xzf /tmp/c.tgz -C /tmp/certs
+cd /tmp/certs && sudo sh client-install.sh      # 无参：直接读同目录 client.json
 ```
+
+包内容固定为三件：
+
+| 文件 | 说明 |
+|---|---|
+| `client.pem` | 客户端证书 |
+| `client.key` | 客户端私钥 |
+| **`client.json`** | **完整客户端配置：server/port/uuid/password + 证书路径**（`/etc/sbox-client/`） |
 
 > 分发服务只在服务端以 systemd 服务运行时启动（监听 `:8000` HTTPS，端口可用 `SING_BOX_CERT_PORT` 覆盖、TTL 可用 `SING_BOX_CERT_TTL` 覆盖）。它只响应存在且未过期的 token，成功发送后立即删除文件。同名（同一秒）重复签会被拒绝，避免覆盖已分发证书。
 
