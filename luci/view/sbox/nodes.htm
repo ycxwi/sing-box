@@ -6,7 +6,8 @@
 	<div class="cbi-section-node">
 		<div id="sbx-status" style="margin-bottom:8px;color:#666">加载中…</div>
 		<style>
-			#sbx-table { border-collapse:collapse; font-size:13px; }
+			/* 主题有 table{width:100%} 全局规则；id 优先级覆盖它，让列宽按内容自适应 */
+			#sbx-table { border-collapse:collapse; font-size:13px; width:auto; }
 			#sbx-table th { text-align:left; padding:8px 10px; border-bottom:2px solid #e4e7ed; white-space:nowrap; color:#555; font-weight:600; }
 			#sbx-table td { padding:8px 10px; border-bottom:1px solid #eef0f3; text-align:left; vertical-align:middle; white-space:nowrap; }
 			#sbx-table td:first-child { font-weight:600; }
