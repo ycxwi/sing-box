@@ -40,6 +40,8 @@
 			#sbx-table td:nth-child(2) { font-weight:600; }
 			#sbx-table input[type=radio] { width:16px; height:16px; margin:0; cursor:pointer; vertical-align:middle; }
 			#sbx-table input[type=radio]:disabled { cursor:not-allowed; }
+			/* 速度列固定宽：文本长度随速率变化（0 B/s ~ MB/s），锁住避免整列跳动 */
+			#sbx-table td:nth-child(8), #sbx-table th:nth-child(8) { min-width:74px; width:74px; }
 		</style>
 		<table id="sbx-table">
 			<thead>
