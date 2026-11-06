@@ -219,7 +219,26 @@ function sbxInstallUrl(){
 	}).catch(function(e){ out.textContent = '请求失败: ' + e; });
 }
 
-// 切 PassWall2 当前节点（单选，勾上即切）
+// 单节点测速（无弹窗）：结果写进行内延迟格子，绿色=通，红色=失败原因
+function sbxSpeed(name){
+	var cell = document.getElementById('sbx-lat-' + name);
+	if(!cell){ return; }
+	cell.style.color = '#999';
+	cell.textContent = '测…';
+	sbxPost({op:'speedtest', name:name}).then(function(d){
+		if(d.ok){
+			cell.style.color = '#0a0';
+			cell.textContent = d.ms + ' ms';
+		} else {
+			cell.style.color = '#c00';
+			cell.textContent = '失败: ' + (d.error || '未知');
+		}
+	}).catch(function(e){
+		cell.style.color = '#c00';
+		cell.textContent = '失败: ' + e;
+	});
+}
+
 // 切分流出口（无弹窗）：成功靠状态栏「重启中…」自动刷新反馈；失败写状态栏红字，不静默
 function sbxActivate(name){
 	var st = document.getElementById('sbx-status');

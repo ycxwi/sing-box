@@ -352,6 +352,44 @@ function api_dispatch()
 		return
 	end
 
+	-- 单节点测速：经该节点的 socks 出口打 204 探测 URL，返回毫秒延迟（PassWall2 连通性测速同源思路）
+	if op == "speedtest" then
+		local name = http.formvalue("name") or ""
+		if not name:match("^[%w_%-]+$") then
+			http.write(jsonc.stringify({ ok = false, error = "非法节点名" }))
+			return
+		end
+		if not fs.access(NODES_DIR .. "/" .. name .. ".json") then
+			http.write(jsonc.stringify({ ok = false, error = "节点不存在: " .. name }))
+			return
+		end
+		local socks = 0
+		for _, n in ipairs(read_nodes()) do
+			if n.name == name then
+				socks = n.socks
+			end
+		end
+		if socks == 0 then
+			http.write(jsonc.stringify({ ok = false, error = "读不到节点 " .. name .. " 的 socks 端口" }))
+			return
+		end
+		local out = sys.exec(string.format(
+			"curl -o /dev/null -s -w '%%{http_code} %%{time_total}' --max-time 8 --socks5-hostname 127.0.0.1:%d https://www.gstatic.com/generate_204",
+			socks)) or ""
+		local code, t = out:match("^(%d+)%s+([%d%.]+)$")
+		if code == "204" and t then
+			http.write(jsonc.stringify({
+				ok = true,
+				name = name,
+				ms = string.format("%.2f", tonumber(t) * 1000),
+			}))
+		else
+			-- code=000 是 curl 超时/连不上（--max-time 到点）；其余非 204 也如实报 HTTP 码
+			http.write(jsonc.stringify({ ok = false, name = name, error = (out ~= "" and out or "无输出") }))
+		end
+		return
+	end
+
 	-- 从服务端给的安装链接拉包并安装（一次性 URL：下载即删，服务端不常开接口）
 	if op == "install_url" then
 		local url = http.formvalue("url") or ""
