@@ -85,22 +85,23 @@ systemctl start sing-box-quick
 
 ```sh
 curl -fsSL -o /tmp/sing-box-client.sh https://raw.githubusercontent.com/ycxwi/sing-box/main/client-install.sh
-sudo sh /tmp/sing-box-client.sh <server> <port> <uuid> <password> <cert> <key> [socks-port]
+sudo sh /tmp/sing-box-client.sh <server> <port> <uuid> <password> <cert> <key> [socks-port] [server-name]
 ```
 
 | 参数 | 说明 |
 |---|---|
-| `<server>` | 服务端域名（同时作为 TLS serverName） |
+| `<server>` | 服务端地址（域名或 IP；连 IP 时用下面的 `server-name` 提供证书域名） |
 | `<port>` | 服务端 TUIC 端口（UDP） |
 | `<uuid>` / `<password>` | 服务端首次启动打印的值 |
 | `<cert>` / `<key>` | 客户端证书与私钥（从服务端 `/etc/sing-box/client.pem` / `client.key` 拷来） |
-| `[socks-port]` | 本地 socks5 端口，默认 `1081` |
+| `[socks-port]` | 本节点 socks5 端口；省略 = 自动分配（从 `1081` 起取首个空闲） |
+| `[server-name]` | TLS SNI / 证书校验名，默认 = `server`。服务端证书签给域名时必须填域名 |
 
-安装结果：二进制 `/usr/bin/sbox-client`（**静态编译，musl libc 可用**）、配置 `/etc/sbox-client/client.json`、procd 服务 `sbox-client`（开机自启）、socks5 监听 `127.0.0.1:<socks-port>`。
+安装结果：二进制 `/usr/bin/sbox-client`（**静态编译，musl libc 可用**）、节点配置 `/etc/sbox-client/nodes/<name>.json`（+ 同名 `.pem`/`.key`）、procd 服务 `sbox-client`（开机自启，每个节点一个实例）、socks5 监听 `127.0.0.1:<socks-port>`。
 
 > 软路由是 musl libc，**必须用静态版二进制**（`sing-box-linux-amd64-static.gz`）。安装器已自动选择，无需手动指定。
 
-> 服务托管依赖 procd，仅 OpenWrt/iStoreOS 具备。其它发行版（Debian/Ubuntu 等）上脚本会显式跳过托管并打印手动启动命令（`sbox-client run -c /etc/sbox-client/client.json`），不会另写 systemd 单元。
+> 服务托管依赖 procd，仅 OpenWrt/iStoreOS 具备。其它发行版（Debian/Ubuntu 等）上脚本会显式跳过托管并打印手动启动命令（`sbox-client run -c /etc/sbox-client/nodes/<name>.json`），不会另写 systemd 单元。
 
 ### 离线安装（软路由无外网时）
 
@@ -120,9 +121,33 @@ ssh root@<router> 'SB_BINARY=/tmp/sbox-static sh /tmp/sing-box-client.sh <server
 |---|---|
 | 节点类型 | Socks |
 | 地址 | `127.0.0.1` |
-| 端口 | `<socks-port>` |
+| 端口 | 该节点的 `<socks-port>` |
 
 然后把该节点设为**分流组的默认出口**（不要改全局节点，否则会连带切断本机对外访问）。
+
+### 多节点
+
+再加一个节点 = 再跑一次安装器（换一份证书与参数），已有节点不受影响：
+
+```sh
+# 有参方式：第二个节点
+sudo sh client-install.sh <server2> <port2> <uuid2> <password2> client2.pem client2.key 1082 <domain2>
+
+# 或者用第二份一次性包（无参方式，端口自动分配）
+cd /tmp/certs2 && sudo sh client-install.sh
+```
+
+| 行为 | 说明 |
+|---|---|
+| 节点名 | 域名里的非字母数字换成下划线（`tok.example.com` → `tok_example_com`） |
+| 端口分配 | 自动从 `1081` 起取首个空闲；显式传端口则校验不与其它节点冲突 |
+| 同名重装 | 视为更新该节点，沿用原端口，其它节点不受影响 |
+| 删除节点 | 删掉 `nodes/<name>.json/.pem/.key` 后 `/etc/init.d/sbox-client restart` |
+| 进程模型 | 每个节点一个独立 sing-box 进程（procd 多实例），互不影响 |
+
+PassWall2 里每个节点各建一个 Socks 节点（端口对应），在分流组里选用哪个。
+
+> 每个节点的证书只对**签发它的那台服务器**有效（各服务器 CA 独立）。换服务器要拿对应该服务器的包，不能拿 A 的证书连 B。
 
 ### 客户端证书从哪来
 

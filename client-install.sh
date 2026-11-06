@@ -4,7 +4,13 @@
 # 用法（两种）：
 #   无参： sh client-install.sh
 #          当前目录需有 client.json / client.pem / client.key（一次性 bundle 解包后）
-#   有参： sh client-install.sh <server> <port> <uuid> <password> <cert> <key> [socks-port]
+#   有参： sh client-install.sh <server> <port> <uuid> <password> <cert> <key> [socks-port] [server-name]
+#
+# 多节点：每执行一次 = 添加或更新一个节点。
+#   - 每个节点一份配置：/etc/sbox-client/nodes/<name>.json（同名即更新，不动其它节点）
+#   - 每个节点一个独立 socks5 端口，默认从 1081 起取首个空闲
+#   - 节点名 = 域名里的非字母数字换成下划线（tok.example.com -> tok_example_com）
+#   - PassWall2 侧把每个 socks 端口各配成一个节点即可
 #
 # 参数：
 #   server      服务端域名（同时作为 TLS serverName）
@@ -13,7 +19,9 @@
 #   password    服务端启动时打印的 password
 #   cert        客户端证书路径（从服务端 /etc/sing-box/client.pem 拷来）
 #   key         客户端私钥路径（/etc/sing-box/client.key）
-#   socks-port  本地 socks5 监听端口，默认 1081
+#   socks-port  本节点 socks5 端口；省略 = 自动分配（同名节点已存在则沿用原端口）
+#   server-name TLS SNI / 证书校验名，默认 = server。
+#               服务端证书签给域名时，server 可填 IP，但这里必须填域名。
 #
 # 说明：客户端二进制用**静态编译版**（CGO_ENABLED=0），因为 OpenWrt 是 musl libc，
 # glibc 动态链接的二进制无法运行。静态版与 glibc 版同时在 Release 里。
@@ -25,12 +33,15 @@ UUID="${3:-}"
 PASSWORD="${4:-}"
 CERT="${5:-}"
 KEY="${6:-}"
-SOCKS_PORT="${7:-1081}"
+SOCKS_PORT="${7:-}"
+SERVER_NAME="${8:-}"
 
 REPO="ycxwi/sing-box"
 TAG="v1.14.4-quick"
 BIN=/usr/bin/sbox-client
 CONF_DIR=/etc/sbox-client
+NODES_DIR=$CONF_DIR/nodes
+INIT_SCRIPT=/etc/init.d/sbox-client
 
 die() {
     echo "FAIL: $*" >&2
@@ -48,7 +59,7 @@ if [ $# -eq 0 ]; then
 else
     MODE=params
     [ -n "$SERVER" ] && [ -n "$PORT" ] && [ -n "$UUID" ] && [ -n "$PASSWORD" ] && [ -n "$CERT" ] && [ -n "$KEY" ] \
-        || die "usage: client-install.sh [<server> <port> <uuid> <password> <cert> <key> [socks-port]]"
+        || die "usage: client-install.sh [<server> <port> <uuid> <password> <cert> <key> [socks-port] [server-name]]"
     [ -f "$CERT" ] || die "client certificate not found: $CERT"
     [ -f "$KEY" ] || die "client key not found: $KEY"
 fi
@@ -102,35 +113,102 @@ chmod 755 "$BIN"
 "$BIN" version >/dev/null 2>&1 || die "installed binary failed to run (arch/libc mismatch?)"
 
 echo "[3/4] installing client certificate and config"
-mkdir -p "$CONF_DIR"
-if [ "$MODE" = fromdir ]; then
-    cp ./client.pem "$CONF_DIR/client.pem"
-    cp ./client.key "$CONF_DIR/client.key"
-else
-    cp "$CERT" "$CONF_DIR/client.pem"
-    cp "$KEY" "$CONF_DIR/client.key"
-fi
-chmod 644 "$CONF_DIR/client.pem"
-chmod 600 "$CONF_DIR/client.key"
+mkdir -p "$NODES_DIR"
 
+# 旧单节点布局（三件平铺在 $CONF_DIR）不再支持。
+# 不做自动迁移：自动搬家会与本次安装的证书互相覆盖（源文件可能正是本次的输入），
+# 检测到即停，给出确切命令，迁移完再跑。
+if [ -f "$CONF_DIR/client.json" ]; then
+    echo "FAIL: legacy single-node layout detected: $CONF_DIR/client.json" >&2
+    echo "" >&2
+    echo "This installer stores every node under $NODES_DIR/." >&2
+    echo "Migrate the existing node once, then re-run:" >&2
+    echo "" >&2
+    echo "  name=<node-name>        # e.g. tok_example_com" >&2
+    echo "  mkdir -p $NODES_DIR" >&2
+    echo "  mv $CONF_DIR/client.json $NODES_DIR/\$name.json" >&2
+    echo "  mv $CONF_DIR/client.pem  $NODES_DIR/\$name.pem" >&2
+    echo "  mv $CONF_DIR/client.key  $NODES_DIR/\$name.key" >&2
+    echo "  sed -i \"s#$CONF_DIR/client\.#$NODES_DIR/\$name.#g\" $NODES_DIR/\$name.json" >&2
+    exit 1
+fi
+
+# 参数来源：无参模式从 bundle 的 client.json 回读；有参模式用命令行
 if [ "$MODE" = fromdir ]; then
-    echo "      using bundled client.json (params already baked in)"
-    cp ./client.json "$CONF_DIR/client.json"
-    chmod 600 "$CONF_DIR/client.json"
+    SERVER=$(sed -n 's/.*"server": *"\([^"]*\)".*/\1/p' ./client.json | head -1)
+    PORT=$(sed -n 's/.*"server_port": *\([0-9]*\).*/\1/p' ./client.json | head -1)
+    UUID=$(sed -n 's/.*"uuid": *"\([^"]*\)".*/\1/p' ./client.json | head -1)
+    PASSWORD=$(sed -n 's/.*"password": *"\([^"]*\)".*/\1/p' ./client.json | head -1)
+    [ -n "$SERVER" ] || die "cannot read server from ./client.json"
+    [ -n "$PORT" ] || die "cannot read server_port from ./client.json"
+    [ -n "$UUID" ] || die "cannot read uuid from ./client.json"
+    CERT_SRC=./client.pem
+    KEY_SRC=./client.key
+    # SNI 以 bundle 里的 server_name 为准（服务端证书签给域名，server 可能是 IP）
+    if [ -z "$SERVER_NAME" ]; then
+        SERVER_NAME=$(sed -n 's/.*"server_name": *"\([^"]*\)".*/\1/p' ./client.json | head -1)
+    fi
 else
-cat > "$CONF_DIR/client.json" <<EOF
+    CERT_SRC=$CERT
+    KEY_SRC=$KEY
+fi
+if [ -z "$SERVER_NAME" ]; then
+    SERVER_NAME=$SERVER
+fi
+
+NODE_NAME=$(echo "$SERVER" | sed 's/[^A-Za-z0-9]/_/g')
+[ -n "$NODE_NAME" ] || die "cannot derive node name from server: $SERVER"
+NODE_JSON="$NODES_DIR/$NODE_NAME.json"
+
+# 端口：显式指定则校验冲突；未指定则沿用同名节点旧端口，否则取首个空闲
+if [ -n "$SOCKS_PORT" ]; then
+    for f in "$NODES_DIR"/*.json; do
+        [ -f "$f" ] || continue
+        if [ "$f" = "$NODE_JSON" ]; then
+            continue
+        fi
+        if sed -n 's/.*"listen_port": *\([0-9]*\).*/\1/p' "$f" | grep -qx "$SOCKS_PORT"; then
+            die "socks port $SOCKS_PORT is already used by $f"
+        fi
+    done
+else
+    if [ -f "$NODE_JSON" ]; then
+        SOCKS_PORT=$(sed -n 's/.*"listen_port": *\([0-9]*\).*/\1/p' "$NODE_JSON" | head -1)
+    fi
+    if [ -z "$SOCKS_PORT" ]; then
+        p=1081
+        while : ; do
+            taken=0
+            for f in "$NODES_DIR"/*.json; do
+                [ -f "$f" ] || continue
+                if sed -n 's/.*"listen_port": *\([0-9]*\).*/\1/p' "$f" | grep -qx "$p"; then
+                    taken=1
+                    break
+                fi
+            done
+            if [ "$taken" -eq 0 ]; then
+                h=$(printf '%04X' "$p")
+                if grep -q ":$h " /proc/net/tcp 2>/dev/null; then
+                    taken=1
+                fi
+            fi
+            if [ "$taken" -eq 0 ]; then
+                break
+            fi
+            p=$((p + 1))
+            if [ "$p" -gt 1100 ]; then
+                die "no free socks port in 1081-1100"
+            fi
+        done
+        SOCKS_PORT=$p
+    fi
+fi
+
+cat > "$NODE_JSON" <<EOF
 {
-  "log": {
-    "level": "warn",
-    "timestamp": true
-  },
+  "log": { "level": "warn", "timestamp": true },
   "inbounds": [
-    {
-      "type": "socks",
-      "tag": "socks-in",
-      "listen": "127.0.0.1",
-      "listen_port": $SOCKS_PORT
-    }
+    { "type": "socks", "tag": "socks-in", "listen": "127.0.0.1", "listen_port": $SOCKS_PORT }
   ],
   "outbounds": [
     {
@@ -141,68 +219,89 @@ cat > "$CONF_DIR/client.json" <<EOF
       "uuid": "$UUID",
       "password": "$PASSWORD",
       "congestion_control": "bbr",
+      "udp_relay_mode": "native",
       "tls": {
         "enabled": true,
-        "server_name": "$SERVER",
+        "server_name": "$SERVER_NAME",
         "alpn": ["h3"],
-        "client_certificate_path": "$CONF_DIR/client.pem",
-        "client_key_path": "$CONF_DIR/client.key"
+        "client_certificate_path": "$NODES_DIR/$NODE_NAME.pem",
+        "client_key_path": "$NODES_DIR/$NODE_NAME.key"
       }
     }
   ]
 }
 EOF
-fi
+chmod 600 "$NODE_JSON"
 
-"$BIN" check -c "$CONF_DIR/client.json" || die "generated config failed validation"
-
-# 无参模式参数不在命令行里，从 client.json 回读以便末尾回显（域名/端口/uuid）
-if [ "$MODE" = fromdir ]; then
-    SERVER=$(sed -n 's/.*"server": *"\([^"]*\)".*/\1/p' ./client.json | head -1)
-    PORT=$(sed -n 's/.*"server_port": *\([0-9]*\).*/\1/p' ./client.json | head -1)
-    UUID=$(sed -n 's/.*"uuid": *"\([^"]*\)".*/\1/p' ./client.json | head -1)
-    PASSWORD=$(sed -n 's/.*"password": *"\([^"]*\)".*/\1/p' ./client.json | head -1)
-    [ -n "$UUID" ] || die "cannot read uuid from ./client.json"
+# 同内容不重复写：更新同名节点时源路径可能就是已装路径，cp 会报 same file
+if [ -f "$NODES_DIR/$NODE_NAME.pem" ] && cmp -s "$CERT_SRC" "$NODES_DIR/$NODE_NAME.pem"; then
+    echo "      client cert unchanged"
+else
+    cp "$CERT_SRC" "$NODES_DIR/$NODE_NAME.pem"
 fi
+if [ -f "$NODES_DIR/$NODE_NAME.key" ] && cmp -s "$KEY_SRC" "$NODES_DIR/$NODE_NAME.key"; then
+    echo "      client key unchanged"
+else
+    cp "$KEY_SRC" "$NODES_DIR/$NODE_NAME.key"
+fi
+chmod 644 "$NODES_DIR/$NODE_NAME.pem"
+chmod 600 "$NODES_DIR/$NODE_NAME.key"
+
+"$BIN" check -c "$NODE_JSON" || die "generated config failed validation"
 
 if [ "$HAS_PROCD" -eq 1 ]; then
-echo "[4/4] installing procd service"
-cat > /etc/init.d/sbox-client <<'INIT'
+echo "[4/4] installing procd service (one instance per node)"
+# 服务脚本固定扫描 nodes/*.json，节点增删只需增删文件 + restart
+cat > "$INIT_SCRIPT" <<'INIT'
 #!/bin/sh /etc/rc.common
-# sbox-client —— sing-box 客户端（TUIC + mTLS），出 socks5 给 PassWall2
+# sbox-client —— sing-box 客户端（TUIC + mTLS），每个节点一个 socks5 端口
+# 节点 = /etc/sbox-client/nodes/<name>.json（同名 .pem/.key 为它的客户端证书）
 START=96
 STOP=10
 USE_PROCD=1
 
 start_service() {
-	if [ ! -f /etc/sbox-client/client.json ]; then
-		echo "sbox-client: /etc/sbox-client/client.json missing, refusing to start" >&2
+	nodes=0
+	for cfg in /etc/sbox-client/nodes/*.json; do
+		[ -f "$cfg" ] || continue
+		base="${cfg%.json}"
+		name="${base##*/}"
+		if [ ! -f "$base.pem" ] || [ ! -f "$base.key" ]; then
+			echo "sbox-client: node $name has no cert/key, skipping it" >&2
+			continue
+		fi
+		procd_open_instance "$name"
+		procd_set_param command /usr/bin/sbox-client run -c "$cfg"
+		procd_set_param respawn 3600 5 5
+		procd_set_param stdout 1
+		procd_set_param stderr 1
+		procd_close_instance
+		nodes=$((nodes + 1))
+	done
+	if [ "$nodes" -eq 0 ]; then
+		echo "sbox-client: no usable node under /etc/sbox-client/nodes, refusing to start" >&2
 		return 1
 	fi
-	if [ ! -f /etc/sbox-client/client.pem ] || [ ! -f /etc/sbox-client/client.key ]; then
-		echo "sbox-client: client cert/key missing, refusing to start" >&2
-		return 1
-	fi
-	procd_open_instance
-	procd_set_param command /usr/bin/sbox-client run -c /etc/sbox-client/client.json
-	procd_set_param respawn 3600 5 5
-	procd_set_param stdout 1
-	procd_set_param stderr 1
-	procd_close_instance
 }
 
 service_triggers() {
 	procd_add_reload_trigger "sbox-client"
 }
 INIT
-chmod 755 /etc/init.d/sbox-client
-/etc/init.d/sbox-client enable
-/etc/init.d/sbox-client restart
+chmod 755 "$INIT_SCRIPT"
+"$INIT_SCRIPT" enable
+"$INIT_SCRIPT" restart
 
-sleep 2
-/etc/init.d/sbox-client status >/dev/null 2>&1 || true
-# busybox 的 ss 对部分监听不显示（实测 1081/1085 都不显示但实际在监听），
-# 直接读内核表判断更可靠。
+# 轮询等本节点端口起来（最长 10s），不固定 sleep
+i=0
+while [ "$i" -lt 10 ]; do
+    PORT_HEX=$(printf '%04X' "$SOCKS_PORT")
+    if grep -q ":${PORT_HEX} " /proc/net/tcp 2>/dev/null; then
+        break
+    fi
+    i=$((i + 1))
+    sleep 1
+done
 PORT_HEX=$(printf '%04X' "$SOCKS_PORT")
 grep -q ":${PORT_HEX} " /proc/net/tcp 2>/dev/null \
     || die "socks listener did not come up on port $SOCKS_PORT (checked /proc/net/tcp)"
@@ -210,28 +309,42 @@ SERVICE_STATE="running, managed by procd"
 else
 echo "[4/4] skipped service setup: not OpenWrt/iStoreOS"
 echo "      reason: procd and /etc/rc.common not found on this system"
-echo "      binary + config are installed; start it manually:"
-echo "        $BIN run -c $CONF_DIR/client.json"
+echo "      binary + config are installed; start a node manually:"
+echo "        $BIN run -c $NODE_JSON"
 SERVICE_STATE="installed, not started"
 fi
 
 echo
-echo "done. client $SERVICE_STATE, socks5 = 127.0.0.1:$SOCKS_PORT"
+echo "done. client $SERVICE_STATE"
 echo
-echo "client params (for reference / adding other devices):"
+echo "this node:"
+echo "  name     = $NODE_NAME"
 echo "  server   = $SERVER"
+echo "  sni      = $SERVER_NAME"
 echo "  port     = $PORT"
 echo "  uuid     = $UUID"
 echo "  password = $PASSWORD"
+echo "  socks    = 127.0.0.1:$SOCKS_PORT"
 echo
-echo "接到 PassWall2："
+echo "all nodes on this device:"
+for f in "$NODES_DIR"/*.json; do
+    [ -f "$f" ] || continue
+    n="${f##*/}"
+    n="${n%.json}"
+    np=$(sed -n 's/.*"listen_port": *\([0-9]*\).*/\1/p' "$f" | head -1)
+    echo "  socks 127.0.0.1:$np   ($n)"
+done
+echo
+echo "接到 PassWall2：每个 socks 端口单独建一个节点"
 echo "  节点类型：Socks"
-echo "  地址：127.0.0.1    端口：$SOCKS_PORT"
-echo "  在分流组里把该节点设为默认出口"
+echo "  地址：127.0.0.1    端口：上面列出的端口"
+echo "  在分流组里按需把某个节点设为默认出口"
 echo
 if [ "$HAS_PROCD" -eq 1 ]; then
 echo "管理："
 echo "  /etc/init.d/sbox-client status"
 echo "  logread -f | grep sbox-client"
 echo "  /etc/init.d/sbox-client restart"
+echo
+echo "增删节点：再跑一次本脚本（加节点），或删掉 nodes/<name>.* 后 restart"
 fi
