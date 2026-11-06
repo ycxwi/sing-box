@@ -45,11 +45,20 @@ URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
 echo "[1/4] downloading $ASSET"
 
 if [ -n "${GH_TOKEN:-}" ]; then
-    curl -fsSL -H "Authorization: token $GH_TOKEN" -L "$URL" -o "$TMP/sing-box.gz" \
-        || die "download failed (private repo requires GH_TOKEN with repo scope)"
+    # 私有仓：github.com/releases/download 对匿名/仅有 token header 的请求都返 404，
+    # 必须先经 API 拿 asset id，再带 Accept: application/octet-stream 取二进制。
+    command -v python3 >/dev/null 2>&1 || die "GH_TOKEN path requires python3 to parse the API response"
+    ASSET_ID=$(curl -fsSL -H "Authorization: token $GH_TOKEN" \
+        "https://api.github.com/repos/$REPO/releases/tags/$TAG" \
+        | python3 -c 'import sys,json;print(json.load(sys.stdin)["assets"][0]["id"])') \
+        || die "cannot resolve release asset id (check token scope: repo)"
+    echo "      asset id: $ASSET_ID (private repo, via API)"
+    curl -fsSL -H "Authorization: token $GH_TOKEN" -H "Accept: application/octet-stream" \
+        "https://api.github.com/repos/$REPO/releases/assets/$ASSET_ID" -o "$TMP/sing-box.gz" \
+        || die "download failed (private repo asset)"
 else
     curl -fsSL -L "$URL" -o "$TMP/sing-box.gz" \
-        || die "download failed (if the repo is private, set GH_TOKEN)"
+        || die "download failed (public repo path; set GH_TOKEN if the repo is private)"
 fi
 
 echo "[2/4] verifying archive"
