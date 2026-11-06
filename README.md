@@ -167,9 +167,19 @@ ssh root@<router> 'chmod 755 /usr/lib/lua/luci/controller/sbox.lua /usr/bin/sbox
 | 列表 | 读 `/etc/sbox-client/nodes/*.json`，显示域名/远端端口/socks 端口/在线状态（判据=该 socks 端口在 `/proc/net/tcp` 处于 LISTEN） |
 | 新增 | 上传一次性包的三件（`client.json`/`client.pem`/`client.key`），复用 `client-install.sh`，自动分配端口 |
 | 删除 | 删 `nodes/<name>.*` 并重启服务 |
+| 从链接安装 | 把服务端打印的一次性链接粘进来，路由器自己下载+解包+安装（见下） |
 | 同步 | 增删时自动维护 PassWall2 的 socks 节点（`remarks = sbox-<name>`），不用手填 |
 
 > 页面需要 LuCI 登录（同源 session），不提供任何免登录入口。
+
+安装链接从哪来：
+
+| 场景 | 获取方式 | 输出 |
+|---|---|---|
+| 首次安装完成 | 证书签好（约 10s）后看日志或文件：`journalctl -u sing-box-quick \| grep install link` 或 `cat /etc/sing-box/install-url.txt` | `https://<domain>:8000/<token>` |
+| 给新设备签发 | 服务端 `sudo sh sign-client.sh` | 同上，外加证书信息与参数 |
+
+链接特性：HTTPS、30 分钟内有效、**只能下一次**（首次下载后文件即删）。路由器侧只接受 `https://` 开头的链接，字符白名单校验后再拼命令。
 
 ### 客户端证书从哪来
 

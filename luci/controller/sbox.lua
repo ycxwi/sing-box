@@ -130,6 +130,20 @@ local function pw2_remove(name)
 	return false
 end
 
+-- 从安装器输出里解析节点名与 socks 端口（比“猜最大端口”可靠），同步给 PassWall2
+local function sync_from_output(out)
+	if not out then
+		return "未同步（无输出）"
+	end
+	local node_name = out:match("name%s*=%s*([%w_%-]+)")
+	local socks_port = tonumber(out:match("socks%s*=%s*127%.0%.0%.1:(%d+)"))
+	if not node_name or not socks_port then
+		return "未同步（输出里找不到节点名或端口）"
+	end
+	local ok, msg = pw2_sync(node_name, socks_port)
+	return ok and ("已同步 " .. node_name .. " @" .. socks_port) or tostring(msg)
+end
+
 function api_dispatch()
 	http.prepare_content("application/json")
 	local op = http.formvalue("op") or "list"
@@ -170,6 +184,39 @@ function api_dispatch()
 		return
 	end
 
+	-- 从服务端给的安装链接拉包并安装（一次性 URL：下载即删，服务端不常开接口）
+	if op == "install_url" then
+		local url = http.formvalue("url") or ""
+		-- 只接受 https，且字符白名单（值要拼进 shell 命令，必须防空注入）
+		if not url:match("^https://[%w%-%._/:%?%=%&%+,~]+$") then
+			http.write(jsonc.stringify({ ok = false, error = "只接受 https:// 安装链接" }))
+			return
+		end
+		local tmp = "/tmp/sbox-url"
+		sys.call("rm -rf " .. tmp .. "; mkdir -p " .. tmp)
+		local dl = sys.exec("curl -fsS --max-time 90 -o " .. tmp .. "/pkg.tgz '" .. url .. "' 2>&1") or ""
+		if not fs.access(tmp .. "/pkg.tgz") then
+			sys.call("rm -rf " .. tmp)
+			http.write(jsonc.stringify({ ok = false, error = "链接下载失败", output = dl }))
+			return
+		end
+		sys.call("cd " .. tmp .. " && tar xzf pkg.tgz 2>&1")
+		if not (fs.access(tmp .. "/client.json") and fs.access(tmp .. "/client.pem") and fs.access(tmp .. "/client.key")) then
+			sys.call("rm -rf " .. tmp)
+			http.write(jsonc.stringify({ ok = false, error = "包内缺少 client.json / client.pem / client.key" }))
+			return
+		end
+		local out = sys.exec("cd " .. tmp .. " && SB_BINARY=/usr/bin/sbox-client sh " .. INSTALL .. " 2>&1") or ""
+		sys.call("rm -rf " .. tmp)
+		http.write(jsonc.stringify({
+			ok = rc_success(out),
+			output = out,
+			pw2 = sync_from_output(out),
+			service = service_state(),
+		}))
+		return
+	end
+
 	if op == "add" then
 		local tmp = "/tmp/sbox-add"
 		sys.call("rm -rf " .. tmp .. "; mkdir -p " .. tmp)
@@ -194,19 +241,8 @@ function api_dispatch()
 		local out = sys.exec("cd " .. tmp .. " && SB_BINARY=/usr/bin/sbox-client sh " .. INSTALL .. " 2>&1") or ""
 		sys.call("rm -rf " .. tmp)
 
-		-- 从刚装好的配置里读回 socks 端口，同步给 PassWall2
-		local pw2_msg = "未同步"
-		local installed = read_nodes()
-		local latest = nil
-		for _, n in ipairs(installed) do
-			if not latest or (n.socks or 0) > (latest.socks or 0) then
-				latest = n
-			end
-		end
-		if latest then
-			local ok2, msg = pw2_sync(latest.name, latest.socks)
-			pw2_msg = ok2 and ("已同步 " .. latest.name) or tostring(msg)
-		end
+		-- 从安装输出解析节点名与 socks 端口，同步给 PassWall2
+		local pw2_msg = sync_from_output(out)
 
 		http.write(jsonc.stringify({
 			ok = rc_success(out),

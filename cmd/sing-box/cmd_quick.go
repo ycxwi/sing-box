@@ -16,7 +16,9 @@ package main
 // 覆盖时**保留 uuid 与客户端 CA**，只改域名/端口——否则已分发的客户端证书全部失效。
 
 import (
+	"archive/tar"
 	"bufio"
+	"compress/gzip"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -170,7 +172,7 @@ func runQuickStart(cmd *cobra.Command, args []string) error {
 
 	// systemd 子进程（ExecStart 拉起）：直接跑服务本体，并顺带开证书分发服务。
 	if quickIsSystemdChild() {
-		startCertDistributor(base, st.Domain)
+		go startCertDistributorWhenReady(base, st)
 		configPaths = []string{cfgPath}
 		return run()
 	}
@@ -447,6 +449,155 @@ func quickFindACMECert(base, domain string) (string, string, error) {
 // 安全模型：每张证书一个随机 token，只落地 tar.gz 一次；请求成功即删除文件，
 // 超过 TTL 未下载也视为作废。HTTPS 用 ACME 签发的服务端证书，因此私钥不会
 // 经明文链路传输。
+// startCertDistributorWhenReady 等 ACME 证书就绪后再起分发服务，并自动生成安装链接。
+//
+// 证书由 run() 内的 inbound 在启动时异步申请，所以 distributor 不能与 run() 同时起，
+// 否则 quickFindACMECert 必然落空（历史 bug：8000 端口永不监听）。
+func startCertDistributorWhenReady(base string, st quickState) {
+	deadline := time.Now().Add(3 * time.Minute)
+	for {
+		if _, _, err := quickFindACMECert(base, st.Domain); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			log.Printf("cert distributor disabled: ACME certificate for %s did not appear within 3m", st.Domain)
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	startCertDistributor(base, st.Domain)
+
+	url, err := quickPrepareInstallLink(base, st)
+	if err != nil {
+		log.Printf("install link not generated: %v", err)
+		return
+	}
+	log.Printf("install link (one-shot, ttl=%s): %s", quickTokenTTL, url)
+	urlFile := filepath.Join(base, "install-url.txt")
+	if werr := os.WriteFile(urlFile, []byte(url+"\n"), 0o600); werr != nil {
+		log.Printf("write %s: %v", urlFile, werr)
+	}
+}
+
+// quickPrepareInstallLink 把首张客户端证书与客户端参数打成一次性 tar.gz，返回下载 URL。
+// 与 sign-client.sh 产的包同构：client.json + client.pem + client.key。
+func quickPrepareInstallLink(base string, st quickState) (string, error) {
+	clientCert := filepath.Join(base, quickCertFile)
+	clientKey := filepath.Join(base, quickClientKey)
+	for _, p := range []string{clientCert, clientKey} {
+		if _, err := os.Stat(p); err != nil {
+			return "", fmt.Errorf("client cert missing: %w", err)
+		}
+	}
+
+	stage, err := os.MkdirTemp("", "sbox-bundle-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(stage)
+
+	clientJSON := fmt.Sprintf(`{
+  "log": { "level": "warn", "timestamp": true },
+  "inbounds": [
+    { "type": "socks", "tag": "socks-in", "listen": "127.0.0.1", "listen_port": 1081 }
+  ],
+  "outbounds": [
+    {
+      "type": "tuic",
+      "tag": "tuic-out",
+      "server": "%s",
+      "server_port": %d,
+      "uuid": "%s",
+      "password": "%s",
+      "congestion_control": "bbr",
+      "udp_relay_mode": "native",
+      "tls": {
+        "enabled": true,
+        "server_name": "%s",
+        "alpn": ["h3"],
+        "client_certificate_path": "/etc/sbox-client/client.pem",
+        "client_key_path": "/etc/sbox-client/client.key"
+      }
+    }
+  ]
+}
+`, st.Domain, st.Port, st.UUID, st.Password, st.Domain)
+	if err := os.WriteFile(filepath.Join(stage, "client.json"), []byte(clientJSON), 0o600); err != nil {
+		return "", err
+	}
+
+	for _, f := range []struct{ src, dst string }{
+		{clientCert, "client.pem"},
+		{clientKey, "client.key"},
+	} {
+		data, rerr := os.ReadFile(f.src)
+		if rerr != nil {
+			return "", rerr
+		}
+		if werr := os.WriteFile(filepath.Join(stage, f.dst), data, 0o600); werr != nil {
+			return "", werr
+		}
+	}
+
+	token := quickRandomUUID()
+	pending := filepath.Join(base, quickPendingDir)
+	if err := os.MkdirAll(pending, 0o755); err != nil {
+		return "", err
+	}
+	tarPath := filepath.Join(pending, token+".tar.gz")
+	fh, err := os.Create(tarPath)
+	if err != nil {
+		return "", err
+	}
+	gz := gzip.NewWriter(fh)
+	tw := tar.NewWriter(gz)
+	for _, name := range []string{"client.json", "client.pem", "client.key"} {
+		data, rerr := os.ReadFile(filepath.Join(stage, name))
+		if rerr != nil {
+			tw.Close()
+			gz.Close()
+			fh.Close()
+			return "", rerr
+		}
+		if werr := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(data))}); werr != nil {
+			tw.Close()
+			gz.Close()
+			fh.Close()
+			return "", werr
+		}
+		if _, werr := tw.Write(data); werr != nil {
+			tw.Close()
+			gz.Close()
+			fh.Close()
+			return "", werr
+		}
+	}
+	if err := tw.Close(); err != nil {
+		gz.Close()
+		fh.Close()
+		return "", err
+	}
+	if err := gz.Close(); err != nil {
+		fh.Close()
+		return "", err
+	}
+	if err := fh.Close(); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(tarPath, 0o600); err != nil {
+		return "", err
+	}
+
+	port := quickDefaultCWSPort
+	if v := strings.TrimSpace(os.Getenv("SING_BOX_CERT_PORT")); v != "" {
+		if n, perr := strconv.Atoi(v); perr == nil && n >= 1 && n <= 65535 {
+			port = n
+		}
+	}
+	return fmt.Sprintf("https://%s:%d/%s", st.Domain, port, token), nil
+}
+
 func startCertDistributor(base, domain string) {
 	crt, key, err := quickFindACMECert(base, domain)
 	if err != nil {
