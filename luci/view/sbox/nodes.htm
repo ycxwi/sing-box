@@ -220,22 +220,18 @@ function sbxInstallUrl(){
 }
 
 // 切 PassWall2 当前节点（单选，勾上即切）
+// 切分流出口（无弹窗）：成功靠状态栏「重启中…」自动刷新反馈；失败写状态栏红字，不静默
 function sbxActivate(name){
-	if(!confirm('把分流出口切到 ' + name + ' ？\n只改 auto 条目与分流默认出口，总节点不动；需重启 PassWall2（几十秒到几分钟），期间网络可能中断。')){
-		sbxLoad();
-		return;
-	}
+	var st = document.getElementById('sbx-status');
+	st.innerHTML = '切换 ' + sbxEsc(name) + ' …';
 	sbxPost({op:'activate', name:name}).then(function(d){
 		if(d.ok){
-			alert('已切到 ' + name + '（auto → 127.0.0.1:' + d.socks + '）'
-				+ '\nPassWall2 正在后台重启，页面会自动刷新显示进度。');
-		} else {
-			alert('切换失败: ' + (d.error || d.output));
+			sbxLoad();
+			return;
 		}
-		sbxLoad();
+		st.innerHTML = '<span style="color:#c00">切换失败: ' + sbxEsc(d.error || d.output || '未知错误') + '</span>';
 	}).catch(function(e){
-		alert('切换请求失败: ' + e);
-		sbxLoad();
+		st.innerHTML = '<span style="color:#c00">切换请求失败: ' + sbxEsc(e) + '</span>';
 	});
 }
 
