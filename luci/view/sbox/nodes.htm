@@ -41,23 +41,23 @@
 			#sbx-table input[type=radio] { width:16px; height:16px; margin:0; cursor:pointer; vertical-align:middle; }
 			#sbx-table input[type=radio]:disabled { cursor:not-allowed; }
 			/* 速度列固定宽：文本长度随速率变化（0 B/s ~ MB/s），锁住避免整列跳动 */
-			#sbx-table td:nth-child(8), #sbx-table th:nth-child(8) { min-width:74px; width:74px; }
+			#sbx-table td:nth-child(11), #sbx-table th:nth-child(11) { min-width:74px; width:74px; }
 		</style>
 		<table id="sbx-table">
 			<thead>
 				<tr>
 					<th>激活</th>
 					<th>节点</th>
+					<th>操作</th>
 					<th>服务器</th>
 					<th>远端端口</th>
 					<th>socks</th>
 					<th>状态</th>
-					<th>延迟</th>
-					<th>速度</th>
+					<th>30天</th>
 					<th>今日</th>
 					<th>本小时</th>
-					<th>30天</th>
-					<th>操作</th>
+					<th>速度</th>
+					<th>延迟</th>
 				</tr>
 			</thead>
 			<tbody id="sbx-body">
@@ -233,19 +233,19 @@ function sbxLoad(){
 				html += '<tr>'
 					+ '<td>' + radio + '</td>'
 					+ '<td data-node="' + sbxEsc(n.name) + '"><strong>' + sbxEsc(n.name) + '</strong></td>'
-					+ '<td>' + sbxEsc(n.server) + '</td>'
-					+ '<td>' + sbxEsc(n.port) + '</td>'
-					+ '<td>127.0.0.1:' + sbxEsc(n.socks) + '</td>'
-					+ '<td>' + st + '</td>'
-					+ '<td id="sbx-lat-' + sbxEsc(n.name) + '" style="color:#999">—</td>'
-					+ '<td id="sbx-rate-' + sbxEsc(n.name) + '" style="color:#999">—</td>'
-					+ '<td id="sbx-day-' + sbxEsc(n.name) + '" style="color:#666">—</td>'
-					+ '<td id="sbx-hour-' + sbxEsc(n.name) + '" style="color:#666">—</td>'
-					+ '<td id="sbx-d30-' + sbxEsc(n.name) + '" style="color:#666">—</td>'
 					+ '<td>' + toggleBtn
 					+ ' <button class="cbi-button" onclick="sbxRename(\'' + sbxEsc(n.name) + '\')">改名</button>'
 					+ ' <button class="cbi-button" onclick="sbxSpeed(\'' + sbxEsc(n.name) + '\')">测速</button>'
 					+ ' <button class="cbi-button cbi-button-remove" onclick="sbxDelete(\'' + sbxEsc(n.name) + '\')">删除</button></td>'
+					+ '<td>' + sbxEsc(n.server) + '</td>'
+					+ '<td>' + sbxEsc(n.port) + '</td>'
+					+ '<td>127.0.0.1:' + sbxEsc(n.socks) + '</td>'
+					+ '<td>' + st + '</td>'
+					+ '<td id="sbx-d30-' + sbxEsc(n.name) + '" style="color:#666">—</td>'
+					+ '<td id="sbx-day-' + sbxEsc(n.name) + '" style="color:#666">—</td>'
+					+ '<td id="sbx-hour-' + sbxEsc(n.name) + '" style="color:#666">—</td>'
+					+ '<td id="sbx-rate-' + sbxEsc(n.name) + '" style="color:#999">—</td>'
+					+ '<td id="sbx-lat-' + sbxEsc(n.name) + '" style="color:#999">—</td>'
 					+ '</tr>';
 			});
 			body.innerHTML = html;
