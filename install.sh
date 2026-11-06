@@ -73,12 +73,37 @@ install -m 755 "$TMP/sing-box" /usr/local/bin/sing-box
 
 echo "[4/4] configuring service"
 if [ $# -eq 0 ]; then
-    # 无参数：清理临时件后 exec，把 stdin/stdout 原样交给 sing-box。
+    # 无参数：清理临时件，把终端交给 sing-box 交互询问域名/端口。
+    # 不用 exec —— 后面要等 ACME 签下证书再打印安装链接。
     rm -rf "$TMP"
     trap - EXIT INT TERM
-    exec /usr/local/bin/sing-box
+    /usr/local/bin/sing-box
+else
+    /usr/local/bin/sing-box "$DOMAIN" "$PORT"
 fi
-/usr/local/bin/sing-box "$DOMAIN" "$PORT"
+
+# 服务已交给 systemd；证书签下来后会自动生成一次性安装链接。
+# 等它落盘（最多 60s）再打印——否则用户只看到“装完了”却不知道链接去哪了。
+echo
+echo "waiting for ACME certificate + install link (up to 60s)..."
+i=0
+while [ "$i" -lt 60 ]; do
+    if [ -f /etc/sing-box/install-url.txt ]; then
+        break
+    fi
+    i=$((i + 1))
+    sleep 1
+done
+if [ -f /etc/sing-box/install-url.txt ]; then
+    echo
+    echo "install link (one-time, valid 30 min):"
+    echo "  $(cat /etc/sing-box/install-url.txt)"
+    echo "  paste it into the router page (service -> Sing-Box nodes)"
+else
+    echo
+    echo "install link not ready yet (ACME may still be running)."
+    echo "check later: cat /etc/sing-box/install-url.txt"
+fi
 
 echo
 echo "done. service: sing-box-quick"
