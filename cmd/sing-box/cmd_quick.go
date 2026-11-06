@@ -27,7 +27,9 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -166,8 +168,9 @@ func runQuickStart(cmd *cobra.Command, args []string) error {
 
 	quickPrintSummary(firstRun, len(args) == 2 && !firstRun, base, cfgPath, statePath, clientCertPath, clientKeyPath, caCertPath, st)
 
-	// systemd 子进程（ExecStart 拉起）：直接跑服务本体。
+	// systemd 子进程（ExecStart 拉起）：直接跑服务本体，并顺带开证书分发服务。
 	if quickIsSystemdChild() {
+		startCertDistributor(base, st.Domain)
 		configPaths = []string{cfgPath}
 		return run()
 	}
@@ -413,9 +416,117 @@ func writePEM(path, blockType string, der []byte, mode os.FileMode) error {
 }
 
 const (
-	quickServiceName = "sing-box-quick"
-	quickServicePath = "/etc/systemd/system/sing-box-quick.service"
+	quickServiceName  = "sing-box-quick"
+	quickServicePath  = "/etc/systemd/system/sing-box-quick.service"
+	quickPendingDir   = "pending"
+	quickDefaultCWSPort = 8000
 )
+
+var quickTokenTTL = 30 * time.Minute
+
+// quickFindACMECert 定位 ACME 已签发的服务端证书（crt + key）。
+func quickFindACMECert(base, domain string) (string, string, error) {
+	pattern := filepath.Join(base, quickACMESubdir, "certificates", "*", domain, domain+".crt")
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return "", "", fmt.Errorf("glob %s: %w", pattern, err)
+	}
+	if len(matches) == 0 {
+		return "", "", fmt.Errorf("no ACME certificate for %s under %s", domain, filepath.Join(base, quickACMESubdir))
+	}
+	crt := matches[0]
+	key := strings.TrimSuffix(crt, ".crt") + ".key"
+	if _, err := os.Stat(key); err != nil {
+		return "", "", fmt.Errorf("certificate key missing beside %s: %w", crt, err)
+	}
+	return crt, key, nil
+}
+
+// startCertDistributor 在 HTTPS 上提供一次性客户端证书下载。
+//
+// 安全模型：每张证书一个随机 token，只落地 tar.gz 一次；请求成功即删除文件，
+// 超过 TTL 未下载也视为作废。HTTPS 用 ACME 签发的服务端证书，因此私钥不会
+// 经明文链路传输。
+func startCertDistributor(base, domain string) {
+	crt, key, err := quickFindACMECert(base, domain)
+	if err != nil {
+		log.Printf("cert distributor disabled: %v", err)
+		return
+	}
+
+	port := quickDefaultCWSPort
+	if v := strings.TrimSpace(os.Getenv("SING_BOX_CERT_PORT")); v != "" {
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n < 1 || n > 65535 {
+			log.Printf("cert distributor disabled: bad SING_BOX_CERT_PORT=%q", v)
+			return
+		}
+		port = n
+	}
+	if v := strings.TrimSpace(os.Getenv("SING_BOX_CERT_TTL")); v != "" {
+		d, perr := time.ParseDuration(v)
+		if perr != nil || d <= 0 {
+			log.Printf("cert distributor: bad SING_BOX_CERT_TTL=%q, keeping %s", v, quickTokenTTL)
+		} else {
+			quickTokenTTL = d
+		}
+	}
+
+	pending := filepath.Join(base, quickPendingDir)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimPrefix(r.URL.Path, "/")
+		if token == "" || len(token) > 64 || strings.ContainsAny(token, "/\\. ") {
+			http.NotFound(w, r)
+			return
+		}
+		tarPath := filepath.Join(pending, token+".tar.gz")
+
+		fi, statErr := os.Stat(tarPath)
+		if statErr != nil {
+			http.NotFound(w, r)
+			return
+		}
+		if time.Since(fi.ModTime()) > quickTokenTTL {
+			if rmErr := os.Remove(tarPath); rmErr != nil {
+				log.Printf("cert distributor: remove expired %s: %v", tarPath, rmErr)
+			}
+			log.Printf("cert distributor: token expired (ttl=%s)", quickTokenTTL)
+			http.NotFound(w, r)
+			return
+		}
+
+		data, readErr := os.ReadFile(tarPath)
+		if readErr != nil {
+			log.Printf("cert distributor: read %s: %v", tarPath, readErr)
+			http.Error(w, "read failed", http.StatusInternalServerError)
+			return
+		}
+		if rmErr := os.Remove(tarPath); rmErr != nil {
+			log.Printf("cert distributor: refusing to serve, cannot remove %s: %v", tarPath, rmErr)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+
+		log.Printf("cert distributor: token served once (%d bytes) from %s", len(data), r.RemoteAddr)
+		w.Header().Set("Content-Type", "application/gzip")
+		w.Header().Set("Content-Disposition", "attachment; filename=\"client-certs.tar.gz\"")
+		w.Write(data)
+	})
+
+	srv := &http.Server{
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() {
+		log.Printf("cert distributor listening on https://0.0.0.0:%d (one-shot tokens, ttl=%s)", port, quickTokenTTL)
+		if err := srv.ListenAndServeTLS(crt, key); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("cert distributor stopped: %v", err)
+		}
+	}()
+}
 
 // quickIsSystemdChild 判断当前进程是否由 systemd 拉起（systemd 注入 INVOCATION_ID）。
 func quickIsSystemdChild() bool {
@@ -431,6 +542,9 @@ func quickEnsureService(cfgPath string) error {
 	if err != nil {
 		return fmt.Errorf("resolve executable path: %w", err)
 	}
+	// ExecStart 用无参形式：有 state 时复配不走交互，同时会经过 runQuickStart 的
+	// systemd 分支（那里启动证书分发服务并调 run）。用 `run -c ...` 会绕过那个分支。
+	_ = cfgPath // 保留形参：调用方语义不变，实际路径由 quickBaseDir 决定
 	unit := fmt.Sprintf(`[Unit]
 Description=sing-box quick mode (TUIC + mTLS + ACME)
 After=network-online.target
@@ -438,14 +552,14 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=%s run -c %s
+ExecStart=%s
 Restart=always
 RestartSec=3
 LimitNOFILE=1048576
 
 [Install]
 WantedBy=multi-user.target
-`, exe, cfgPath)
+`, exe)
 
 	if current, readErr := os.ReadFile(quickServicePath); readErr != nil || string(current) != unit {
 		if writeErr := os.WriteFile(quickServicePath, []byte(unit), 0o644); writeErr != nil {

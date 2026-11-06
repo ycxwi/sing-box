@@ -56,11 +56,44 @@ openssl verify -CAfile "$CA" "$PEM" >/dev/null 2>&1 \
 
 openssl x509 -in "$PEM" -noout -subject -issuer -dates 2>/dev/null | sed 's/^/      /'
 
+# 打包成一次性下载件（固定文件名 client.pem / client.key，客户端直接解包可用）
+PENDING="$BASE/pending"
+mkdir -p "$PENDING"
+TOKEN=$(openssl rand -hex 16)
+TARBALL="$PENDING/$TOKEN.tar.gz"
+STAGE=$(mktemp -d)
+trap 'rm -rf "$STAGE"' EXIT INT TERM
+cp "$PEM" "$STAGE/client.pem"
+cp "$KEY" "$STAGE/client.key"
+chmod 644 "$STAGE/client.pem"
+chmod 600 "$STAGE/client.key"
+tar czf "$TARBALL" -C "$STAGE" client.pem client.key 2>/dev/null \
+    || die "failed to package $TARBALL"
+rm -rf "$STAGE"
+trap - EXIT INT TERM
+chmod 600 "$TARBALL"
+
 echo
 echo "issued:"
 echo "  $PEM"
 echo "  $KEY"
+# 从 state 文件读服务端域名（busybox 无 jq，用 sed）
+DOMAIN=""
+if [ -f "$BASE/quick-state.json" ]; then
+    DOMAIN=$(sed -n 's/.*"domain": *"\([^"]*\)".*/\1/p' "$BASE/quick-state.json" | head -1)
+fi
+[ -n "$DOMAIN" ] || die "cannot read domain from $BASE/quick-state.json"
+
+PORT=8000
+if [ -f "$BASE/cert-port" ]; then
+    P=$(tr -d ' \n' < "$BASE/cert-port")
+    [ -n "$P" ] && PORT=$P
+fi
+
 echo
-echo "deploy to device:"
+echo "one-shot download (HTTPS, valid 30 min, single use):"
+echo "  https://$DOMAIN:$PORT/$TOKEN"
+echo
+echo "or deploy with scp:"
 echo "  scp $PEM root@<device>:/tmp/client.pem"
 echo "  scp $KEY root@<device>:/tmp/client.key"

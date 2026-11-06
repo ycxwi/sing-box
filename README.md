@@ -139,9 +139,21 @@ scp /tmp/client.key root@<router>:/tmp/
 sudo sh sign-client.sh
 ```
 
-输出到 `/etc/sing-box/clients/client-<时间戳>.pem` + `.key`，并打印拷到设备的命令。同名（同一秒）重复执行会被拒绝，避免覆盖已分发证书。
+输出到 `/etc/sing-box/clients/client-<时间戳>.pem` + `.key`，并打印两种交付方式：
 
-> 脚本会自动做 CA 验签，签发失败即报错退出。与首张客户端证书用的同一个 CA，新旧证书可以共存。
+| 方式 | 说明 |
+|---|---|
+| **一次性 HTTPS 下载** | `https://<server-domain>:8000/<token>` — 30 分内有效、**只能下一次**、下载即删；走 ACME 同一张真证书，私钥不经明文链路 |
+| scp | 传统方式，走 SSH 加密链路 |
+
+设备侧：
+
+```sh
+curl -fsS -o /tmp/c.tgz <一次性URL>
+tar xzf /tmp/c.tgz -C /tmp/          # 包内固定为 client.pem / client.key
+```
+
+> 分发服务只在服务端以 systemd 服务运行时启动（监听 `:8000` HTTPS，端口可用 `SING_BOX_CERT_PORT` 覆盖、TTL 可用 `SING_BOX_CERT_TTL` 覆盖）。它只响应存在且未过期的 token，成功发送后立即删除文件。同名（同一秒）重复签会被拒绝，避免覆盖已分发证书。
 
 ### 客户端管理
 
