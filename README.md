@@ -5,14 +5,27 @@
 
 ## 一键安装
 
+### 带参数（非交互）
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/ycxwi/sing-box/main/install.sh | sudo sh -s <domain> [port]
 ```
 
-在仓库目录内等价于：
+### 不带参数（首次交互询问域名/端口）
 
 ```sh
-sudo sh install.sh <domain> [port]
+curl -fsSL -o /tmp/sing-box-install.sh https://raw.githubusercontent.com/ycxwi/sing-box/main/install.sh && sudo sh /tmp/sing-box-install.sh
+```
+
+安装完成后会把终端交给 `sing-box`，由它依次询问 `Domain` 与 `Port`。
+
+> 为甚么交互用法不能管道？`curl | sh` 时脚本的 stdin 是管道，交互提问会拿不到终端输入。所以无参用法必须先把脚本存成文件再执行（上面这条已经这样做了）。
+
+### 仓库内直跑
+
+```sh
+sudo sh install.sh            # 交互询问
+sudo sh install.sh <domain> [port]   # 参数直给
 ```
 
 | 参数 | 说明 |

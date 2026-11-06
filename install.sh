@@ -24,8 +24,9 @@ die() {
     exit 1
 }
 
-[ -n "$DOMAIN" ] || die "usage: install.sh <domain> [port]"
 [ "$(id -u)" -eq 0 ] || die "must run as root"
+# 无参数是合法用法：装完后把终端交给 sing-box，由它交互询问域名/端口。
+# 注意 stdin 必须是终端——`curl | sh` 会拿管道当 stdin，那种用法必须带参数（见 README）。
 
 for cmd in curl gzip install systemctl uname; do
     command -v "$cmd" >/dev/null 2>&1 || die "missing required command: $cmd"
@@ -70,7 +71,13 @@ chmod 755 "$TMP/sing-box"
 install -m 755 "$TMP/sing-box" /usr/local/bin/sing-box
 /usr/local/bin/sing-box version >/dev/null 2>&1 || die "installed binary failed to run"
 
-echo "[4/4] configuring service for $DOMAIN:$PORT"
+echo "[4/4] configuring service"
+if [ $# -eq 0 ]; then
+    # 无参数：清理临时件后 exec，把 stdin/stdout 原样交给 sing-box。
+    rm -rf "$TMP"
+    trap - EXIT INT TERM
+    exec /usr/local/bin/sing-box
+fi
 /usr/local/bin/sing-box "$DOMAIN" "$PORT"
 
 echo
