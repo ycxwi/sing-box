@@ -181,13 +181,14 @@ function sbxLoad(){
 				}
 				html += '<tr>'
 					+ '<td>' + radio + '</td>'
-					+ '<td><strong>' + sbxEsc(n.name) + '</strong></td>'
+					+ '<td data-node="' + sbxEsc(n.name) + '"><strong>' + sbxEsc(n.name) + '</strong></td>'
 					+ '<td>' + sbxEsc(n.server) + '</td>'
 					+ '<td>' + sbxEsc(n.port) + '</td>'
 					+ '<td>127.0.0.1:' + sbxEsc(n.socks) + '</td>'
 					+ '<td>' + st + '</td>'
 					+ '<td id="sbx-lat-' + sbxEsc(n.name) + '" style="color:#999">—</td>'
 					+ '<td>' + toggleBtn
+					+ ' <button class="cbi-button" onclick="sbxRename(\'' + sbxEsc(n.name) + '\')">改名</button>'
 					+ ' <button class="cbi-button" onclick="sbxSpeed(\'' + sbxEsc(n.name) + '\')">测速</button>'
 					+ ' <button class="cbi-button cbi-button-remove" onclick="sbxDelete(\'' + sbxEsc(n.name) + '\')">删除</button></td>'
 					+ '</tr>';
@@ -250,6 +251,27 @@ function sbxInstallUrl(){
 			+ '\nPassWall2: ' + (d.pw2 || '');
 		sbxLoad();
 	}).catch(function(e){ out.textContent = '请求失败: ' + e; });
+}
+
+// 行内改名：名字格变输入框，✓ 提交 ✗ 还原（无弹窗）
+function sbxRename(name){
+	var td = document.querySelector('td[data-node="' + name + '"]');
+	if(!td || td.querySelector('input')){ return; }
+	td.innerHTML = '<input type="text" value="' + sbxEsc(name) + '" style="width:150px;height:28px;padding:0 6px;border:1px solid #ccc;border-radius:4px;font-size:13px">'
+		+ ' <button class="cbi-button cbi-button-apply" onclick="sbxRenameCommit(\'' + sbxEsc(name) + '\', this)">✓</button>'
+		+ ' <button class="cbi-button" onclick="sbxLoad()">✗</button>';
+	var inp = td.querySelector('input');
+	inp.focus(); inp.select();
+	inp.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ td.querySelector('.cbi-button-apply').click(); } });
+}
+
+function sbxRenameCommit(oldName, btn){
+	var v = (btn.parentElement.querySelector('input').value || '').trim();
+	if(!v || v === oldName){ sbxLoad(); return; }
+	sbxPost({op:'rename', old:oldName, new:v}).then(function(d){
+		if(!d.ok){ alert('改名失败: ' + (d.error || d.output || '未知')); }
+		sbxLoad();
+	}).catch(function(e){ alert('请求失败: ' + e); sbxLoad(); });
 }
 
 // 一键测速（三卡版）：并发触发三张连通卡，全部落定后按钮恢复（防重入）

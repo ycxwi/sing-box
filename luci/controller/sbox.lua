@@ -419,6 +419,70 @@ function api_dispatch()
 		return
 	end
 
+	-- 节点改名：三文件 mv + 禁用标记跟随 + PassWall2 remarks/section/auto remarks 同步 + restart
+	if op == "rename" then
+		local old = http.formvalue("old") or ""
+		local new = http.formvalue("new") or ""
+		if not old:match("^[%w_%-]+$") or not new:match("^[%w_%-]+$") then
+			http.write(jsonc.stringify({ ok = false, error = "非法节点名（只允许字母数字下划线连字符）" }))
+			return
+		end
+		if not fs.access(NODES_DIR .. "/" .. old .. ".json") then
+			http.write(jsonc.stringify({ ok = false, error = "节点不存在: " .. old }))
+			return
+		end
+		if fs.access(NODES_DIR .. "/" .. new .. ".json") then
+			http.write(jsonc.stringify({ ok = false, error = "新名已存在: " .. new }))
+			return
+		end
+		for _, ext in ipairs({ ".json", ".pem", ".key" }) do
+			os.rename(NODES_DIR .. "/" .. old .. ext, NODES_DIR .. "/" .. new .. ext)
+		end
+		-- json 内证书路径含文件名（client_certificate_path/key_path），同步替换否则 sing-box 起不来
+		local jf = io.open(NODES_DIR .. "/" .. new .. ".json", "r")
+		if jf then
+			local body = jf:read("*a") or ""
+			jf:close()
+			body = body:gsub("/" .. old .. "%.pem", "/" .. new .. ".pem")
+			body = body:gsub("/" .. old .. "%.key", "/" .. new .. ".key")
+			jf = io.open(NODES_DIR .. "/" .. new .. ".json", "w")
+			jf:write(body)
+			jf:close()
+		end
+		if fs.access(DISABLED_DIR .. "/" .. old) then
+			os.rename(DISABLED_DIR .. "/" .. old, DISABLED_DIR .. "/" .. new)
+		end
+		-- PassWall2：remarks 必改；显式名 sbox_<old> 一并改名（同名冲突只改 remarks）
+		local rows = pw2_table()
+		local moved_sec = nil
+		for sec, f in pairs(rows) do
+			if f.remarks == "sbox-" .. old then
+				sys.call("uci set passwall2." .. sec .. ".remarks='sbox-" .. new .. "'")
+				if sec == "sbox_" .. old and not rows["sbox_" .. new] then
+					sys.call("uci rename passwall2." .. sec .. "=sbox_" .. new)
+					moved_sec = "sbox_" .. new
+				end
+				break
+			end
+		end
+		-- auto 条目正指向该节点时同步显示名
+		local ar = (sys.exec("uci get passwall2.auto.remarks 2>/dev/null") or ""):gsub("%s+$", "")
+		if ar == "auto→" .. old then
+			sys.call("uci set passwall2.auto.remarks='auto→" .. new .. "'")
+		end
+		sys.call("uci commit passwall2")
+		local out = sys.exec(INIT .. " restart 2>&1") or ""
+		http.write(jsonc.stringify({
+			ok = true,
+			old = old,
+			new = new,
+			pw2_section = moved_sec,
+			output = out,
+			service = service_state(),
+		}))
+		return
+	end
+
 	-- 从服务端给的安装链接拉包并安装（一次性 URL：下载即删，服务端不常开接口）
 	if op == "install_url" then
 		local url = http.formvalue("url") or ""
