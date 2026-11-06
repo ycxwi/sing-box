@@ -171,7 +171,7 @@ ssh root@<router> 'chmod 755 /usr/lib/lua/luci/controller/sbox.lua /usr/bin/sbox
 | 同步 | 增删时自动维护 PassWall2 的 socks 节点（`remarks = sbox-<name>`），不用手填 |
 | 启停 | 按节点手动禁用/启用：禁用后该节点进程停止、socks 端口释放，其余节点照常跑 |
 | 激活 | 勾选某节点 = 切分流出口到它（单选，只改固定条目 auto，见下） |
-| 测速 | 每节点「测速」按钮：经该节点 socks 出口打 `https://www.gstatic.com/generate_204`，行内显示毫秒延迟（两位小数，绿色；失败红字原因），无弹窗 |
+| 测速 | 每节点「测速」按钮 + 「一键测速」：经各节点 socks 出口打 `https://www.gstatic.com/generate_204`，行内显示毫秒延迟（两位小数，绿色；失败红字原因），无弹窗；一键=并发触发所有在线且启用节点，测完按钮自动恢复 |
 
 > 页面需要 LuCI 登录（同源 session），不提供任何免登录入口。
 
