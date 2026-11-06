@@ -23,11 +23,12 @@
 					<th>远端端口</th>
 					<th>socks</th>
 					<th>状态</th>
+					<th>延迟</th>
 					<th>操作</th>
 				</tr>
 			</thead>
 			<tbody id="sbx-body">
-				<tr><td colspan="7">加载中…</td></tr>
+				<tr><td colspan="8">加载中…</td></tr>
 			</tbody>
 		</table>
 		<div style="margin-top:10px">
@@ -105,7 +106,7 @@ function sbxLoad(){
 		.then(function(r){ return r.json(); })
 		.then(function(d){
 			if(!d.ok){
-				body.innerHTML = '<tr><td colspan="7" style="color:#c00">' + sbxEsc(d.error || '加载失败') + '</td></tr>';
+				body.innerHTML = '<tr><td colspan="8" style="color:#c00">' + sbxEsc(d.error || '加载失败') + '</td></tr>';
 				return;
 			}
 			var stext = '服务状态：' + (d.service || 'unknown') + '　节点目录：' + d.nodes_dir + '　共 ' + d.nodes.length + ' 个节点';
@@ -118,7 +119,7 @@ function sbxLoad(){
 				window.__sbxPoll = setTimeout(sbxLoad, 5000);
 			}
 			if(!d.nodes.length){
-				body.innerHTML = '<tr><td colspan="7">暂无节点</td></tr>';
+				body.innerHTML = '<tr><td colspan="8">暂无节点</td></tr>';
 				return;
 			}
 			var html = '';
@@ -156,13 +157,16 @@ function sbxLoad(){
 					+ '<td>' + sbxEsc(n.port) + '</td>'
 					+ '<td>127.0.0.1:' + sbxEsc(n.socks) + '</td>'
 					+ '<td>' + st + '</td>'
-					+ '<td>' + toggleBtn + ' <button class="cbi-button cbi-button-remove" onclick="sbxDelete(\'' + sbxEsc(n.name) + '\')">删除</button></td>'
+					+ '<td id="sbx-lat-' + sbxEsc(n.name) + '" style="color:#999">—</td>'
+					+ '<td>' + toggleBtn
+					+ ' <button class="cbi-button" onclick="sbxSpeed(\'' + sbxEsc(n.name) + '\')">测速</button>'
+					+ ' <button class="cbi-button cbi-button-remove" onclick="sbxDelete(\'' + sbxEsc(n.name) + '\')">删除</button></td>'
 					+ '</tr>';
 			});
 			body.innerHTML = html;
 		})
 		.catch(function(e){
-			body.innerHTML = '<tr><td colspan="7" style="color:#c00">请求失败: ' + sbxEsc(e) + '</td></tr>';
+			body.innerHTML = '<tr><td colspan="8" style="color:#c00">请求失败: ' + sbxEsc(e) + '</td></tr>';
 		});
 }
 
