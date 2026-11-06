@@ -5,15 +5,21 @@
 <div class="cbi-section">
 	<div class="cbi-section-node">
 		<div id="sbx-status" style="margin-bottom:8px;color:#666">加载中…</div>
-		<table class="cbi-section-table" style="width:100%">
+		<style>
+			#sbx-table { border-collapse:collapse; font-size:13px; }
+			#sbx-table th { text-align:left; padding:8px 10px; border-bottom:2px solid #e4e7ed; white-space:nowrap; color:#555; font-weight:600; }
+			#sbx-table td { padding:8px 10px; border-bottom:1px solid #eef0f3; text-align:left; vertical-align:middle; white-space:nowrap; }
+			#sbx-table td:first-child { font-weight:600; }
+		</style>
+		<table id="sbx-table">
 			<thead>
-				<tr class="cbi-section-table-titles">
-					<th class="cbi-section-table-cell">节点</th>
-					<th class="cbi-section-table-cell">服务器</th>
-					<th class="cbi-section-table-cell">远端端口</th>
-					<th class="cbi-section-table-cell">socks</th>
-					<th class="cbi-section-table-cell">状态</th>
-					<th class="cbi-section-table-cell">操作</th>
+				<tr>
+					<th>节点</th>
+					<th>服务器</th>
+					<th>远端端口</th>
+					<th>socks</th>
+					<th>状态</th>
+					<th>操作</th>
 				</tr>
 			</thead>
 			<tbody id="sbx-body">
@@ -110,13 +116,13 @@ function sbxLoad(){
 				if(!n.has_pem || !n.has_key){
 					st += ' <span style="color:#c00">(缺证书)</span>';
 				}
-				html += '<tr class="cbi-section-table-row">'
-					+ '<td class="cbi-value"><strong>' + sbxEsc(n.name) + '</strong></td>'
-					+ '<td class="cbi-value">' + sbxEsc(n.server) + '</td>'
-					+ '<td class="cbi-value">' + sbxEsc(n.port) + '</td>'
-					+ '<td class="cbi-value">127.0.0.1:' + sbxEsc(n.socks) + '</td>'
-					+ '<td class="cbi-value">' + st + '</td>'
-					+ '<td class="cbi-value"><button class="cbi-button cbi-button-remove" onclick="sbxDelete(\'' + sbxEsc(n.name) + '\')">删除</button></td>'
+				html += '<tr>'
+					+ '<td><strong>' + sbxEsc(n.name) + '</strong></td>'
+					+ '<td>' + sbxEsc(n.server) + '</td>'
+					+ '<td>' + sbxEsc(n.port) + '</td>'
+					+ '<td>127.0.0.1:' + sbxEsc(n.socks) + '</td>'
+					+ '<td>' + st + '</td>'
+					+ '<td><button class="cbi-button cbi-button-remove" onclick="sbxDelete(\'' + sbxEsc(n.name) + '\')">删除</button></td>'
 					+ '</tr>';
 			});
 			body.innerHTML = html;
