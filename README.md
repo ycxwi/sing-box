@@ -169,8 +169,14 @@ ssh root@<router> 'chmod 755 /usr/lib/lua/luci/controller/sbox.lua /usr/bin/sbox
 | 删除 | 删 `nodes/<name>.*` 并重启服务 |
 | 从链接安装 | 把服务端打印的一次性链接粘进来，路由器自己下载+解包+安装（见下） |
 | 同步 | 增删时自动维护 PassWall2 的 socks 节点（`remarks = sbox-<name>`），不用手填 |
+| 启停 | 按节点手动禁用/启用：禁用后该节点进程停止、socks 端口释放，其余节点照常跑 |
 
 > 页面需要 LuCI 登录（同源 session），不提供任何免登录入口。
+
+手动启停的实现：禁用 = 在 `/etc/sbox-client/disabled/<name>` 建一个空标记文件，然后 `restart`；init 脚本扫 `nodes/*.json` 时跳过有标记的节点，procd 就不再为它建实例。启用 = 删标记再 `restart`。
+不改 json 是因为 sing-box 对配置字段是严格解析，未知字段会直接报错。
+
+> `restart` 会重建全部实例（其余节点中断 1-2 秒）。禁用的节点在 PassWall2 里那条 socks 节点仍然存在，选它会连不通——这是预期：停用的节点本就不该被选中。
 
 安装链接从哪来：
 
