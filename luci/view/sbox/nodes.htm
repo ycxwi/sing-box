@@ -221,13 +221,13 @@ function sbxInstallUrl(){
 
 // 切 PassWall2 当前节点（单选，勾上即切）
 function sbxActivate(name){
-	if(!confirm('把 PassWall2 当前节点切到 ' + name + ' ？\n切换会重启 PassWall2，需 1-4 分钟，期间网络可能中断。')){
+	if(!confirm('把分流出口切到 ' + name + ' ？\n只改 auto 条目与分流默认出口，总节点不动；需重启 PassWall2（几十秒到几分钟），期间网络可能中断。')){
 		sbxLoad();
 		return;
 	}
 	sbxPost({op:'activate', name:name}).then(function(d){
 		if(d.ok){
-			alert('已切到 ' + name + (d.section ? ('（PassWall2 段 ' + d.section + '）') : '')
+			alert('已切到 ' + name + '（auto → 127.0.0.1:' + d.socks + '）'
 				+ '\nPassWall2 正在后台重启，页面会自动刷新显示进度。');
 		} else {
 			alert('切换失败: ' + (d.error || d.output));

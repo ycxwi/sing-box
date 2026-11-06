@@ -179,7 +179,7 @@ ssh root@<router> 'chmod 755 /usr/lib/lua/luci/controller/sbox.lua /usr/bin/sbox
 
 > `restart` 会重建全部实例（其余节点中断 1-2 秒）。禁用的节点在 PassWall2 里那条 socks 节点仍然存在，选它会连不通——这是预期：停用的节点本就不该被选中。
 
-激活的实现：PassWall2 的全局生效节点存在 `passwall2.@global[0].node`（值=节点 section 名）。勾选 = `uci set` 换成目标节点 + `commit` + 后台 `restart`。restart 里 app.sh 要做 DNS/规则重建，典型 10 秒到 4 分钟，所以是异步的：接口秒回，页面顶部会显示「PassWall2 重启中…」并每 5 秒自动刷新。节点与 PassWall2 条目的对应关系先按 remarks（`sbox-<name>`）认领，认领不到再按 socks 端点（`127.0.0.1:<port>`）认领，所以迁移前建的旧名条目（如 `sbox-mtls`）也能被勾选激活。
+激活的实现（分流出口方案）：全局总节点 `@global[0].node` 一直指向分流节点（`protocol=_shunt`），从不被改。PassWall2 节点表里固定一个 section 名叫 `auto` 的 socks 条目，分流节点的 `default_node` 固定指向 `auto`。勾选某节点 = 把 `auto` 的字段覆盖成它（`port` 指到它的 socks 端口，remarks 变成 `auto→<节点名>` 方便在 PassWall2 里辨认），重名即覆盖不新建；总节点若不是分流节点则显式报错拒切。改完 `commit` + 后台 `restart`（app.sh 要做 DNS/规则重建，典型几十秒到几分钟），接口秒回，页面顶部显示「PassWall2 重启中…」并每 5 秒自动刷新。当前勾选状态（active）的判定：分流节点 `default_node=auto` 时按 `auto.port` 对节点 socks 端口匹配。节点与 PassWall2 条目的对应关系先按 remarks（`sbox-<name>`）认领，认领不到再按 socks 端点（`127.0.0.1:<port>`）认领，所以迁移前建的旧名条目（如 `sbox-mtls`）也能被勾选激活。
 
 安装链接从哪来：
 

@@ -203,12 +203,27 @@ function api_dispatch()
 		local listen = listening_ports()
 		local nodes = read_nodes()
 		local rows = pw2_table()
-		local active_sec = pw2_current()
+		-- 当前出口：总节点是分流节点时看它的 default_node，否则总节点本身就是出口
+		local cur = pw2_current()
+		local curf = rows[cur]
+		local exit_sec = nil
+		if curf then
+			if curf.protocol == "_shunt" then
+				exit_sec = curf.default_node or ""
+			else
+				exit_sec = cur
+			end
+		end
+		local auto_port = rows["auto"] and tonumber(rows["auto"].port) or nil
 		for _, n in ipairs(nodes) do
 			n.up = listen[n.socks] and true or false
 			n.enabled = not is_disabled(n.name)
 			n.pw2 = pw2_find(rows, n.name, n.socks)
-			n.active = (n.pw2 ~= nil and n.pw2 == active_sec)
+			if exit_sec == "auto" then
+				n.active = (n.socks ~= 0 and n.socks == auto_port)
+			else
+				n.active = (n.pw2 ~= nil and n.pw2 == exit_sec)
+			end
 		end
 		local pw2_busy = pw2_restarting()
 		http.write(jsonc.stringify({
@@ -272,7 +287,8 @@ function api_dispatch()
 		return
 	end
 
-	-- 切换 PassWall2 当前生效节点（= 全局 @global[0].node）
+	-- 切换分流出口：固定条目 auto 被覆盖成目标节点，分流节点的 default_node 永远指向 auto；
+	-- 总节点（@global[0].node，即分流节点本身）从不被碰（用户拍板 2026-11-06：只改分流节点，固定名 auto，重名覆盖）
 	if op == "activate" then
 		local name = http.formvalue("name") or ""
 		if not name:match("^[%w_%-]+$") then
@@ -293,33 +309,43 @@ function api_dispatch()
 				socks = n.socks
 			end
 		end
-		local sec = pw2_find(pw2_table(), name, socks)
-		if not sec then
-			http.write(jsonc.stringify({ ok = false, error = "PassWall2 里没有这个节点，先重新保存一次以同步" }))
+		if socks == 0 then
+			http.write(jsonc.stringify({ ok = false, error = "读不到节点 " .. name .. " 的 socks 端口" }))
 			return
 		end
-		-- 匿名 section（@nodes[N]）改成稳定名：索引会随删节点漂移，名字不会
-		local target = sec
-		if sec:sub(1, 1) == "@" then
-			target = "sbox_" .. name
-			local rn = sys.exec("uci rename passwall2." .. sec .. "=" .. target .. " 2>&1") or ""
-			if not rn:match("^%s*$") then
-				http.write(jsonc.stringify({ ok = false, error = "重命名 PassWall2 节点失败", output = rn }))
-				return
-			end
-		end
-		local seterr = sys.exec("uci set passwall2.@global[0].node='" .. target .. "' 2>&1") or ""
-		if not seterr:match("^%s*$") then
-			http.write(jsonc.stringify({ ok = false, error = "写入 PassWall2 当前节点失败", output = seterr }))
+		local rows = pw2_table()
+		local cur = pw2_current()
+		local curf = rows[cur]
+		if not curf then
+			http.write(jsonc.stringify({ ok = false, error = "读不到当前总节点: " .. (cur ~= "" and cur or "(空)") }))
 			return
 		end
-		sys.call("uci commit passwall2")
+		if curf.protocol ~= "_shunt" then
+			http.write(jsonc.stringify({ ok = false, error = "当前总节点不是分流节点（protocol=" .. (curf.protocol or "?") .. "），本功能只在分流模式下切出口" }))
+			return
+		end
+		-- auto 条目：固定 section 名，已存在就覆盖字段，不存在先建
+		local create = ""
+		if not rows["auto"] then
+			create = "uci set passwall2.auto=nodes; "
+		end
+		local err = sys.exec(create .. string.format(
+			"uci set passwall2.auto.type='sing-box'; uci set passwall2.auto.remarks='auto→%s'; " ..
+			"uci set passwall2.auto.protocol='socks'; uci set passwall2.auto.address='127.0.0.1'; " ..
+			"uci set passwall2.auto.port='%d'; uci set passwall2.'%s'.default_node='auto'; " ..
+			"uci commit passwall2 2>&1",
+			name, socks, cur)) or ""
+		if not err:match("^%s*$") then
+			http.write(jsonc.stringify({ ok = false, error = "写入 PassWall2 失败", output = err }))
+			return
+		end
 		-- restart 同步跑要 1-4 分钟（app.sh start 里做 DNS/节点探测），必须后台化，
 		-- 否则 HTTP 请求扯死、页面一直转圈
 		sys.call("nohup /etc/init.d/passwall2 restart >/tmp/sbox-pw2-restart.log 2>&1 &")
 		http.write(jsonc.stringify({
 			ok = true,
-			section = target,
+			node = name,
+			socks = socks,
 			pending = true,
 			service = service_state(),
 		}))
