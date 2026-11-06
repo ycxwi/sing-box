@@ -30,7 +30,14 @@
 <div class="cbi-section">
 	<h3>从安装链接安装</h3>
 	<div class="cbi-section-node">
-		<p style="color:#666">把服务端打印的一次性链接（<code>https://&lt;域名&gt;:8000/&lt;token&gt;</code>，30 分钟内单次有效）粘到这里，路由器自己下载、解包、安装。</p>
+		<div style="margin:10px 0;padding:10px;background:#f7f8fa;border:1px solid #e4e7ed;border-radius:4px">
+			<div style="color:#666;margin-bottom:6px">第 1 步：在服务器上装服务端（不带参数会交互询问域名/端口）</div>
+			<div style="display:flex;gap:8px;align-items:flex-start">
+				<code id="sbx-srv-cmd" style="flex:1 1 auto;min-width:0;display:block;padding:8px;background:#fff;border:1px solid #dcdfe6;border-radius:4px;font-size:12px;line-height:1.6;word-break:break-all">curl -fsSL -o /tmp/sing-box-install.sh https://raw.githubusercontent.com/ycxwi/sing-box/main/install.sh &amp;&amp; sudo sh /tmp/sing-box-install.sh</code>
+				<button class="cbi-button" type="button" onclick="sbxCopyServerCmd()">复制</button>
+			</div>
+		</div>
+		<p style="color:#666">第 2 步：把服务端打印的一次性链接（<code>https://&lt;域名&gt;:8000/&lt;token&gt;</code>，30 分钟内单次有效）粘到这里，路由器自己下载、解包、安装。</p>
 		<div style="margin:12px 0">
 			<div style="display:flex">
 				<input type="text" id="sbx-url" placeholder="https://example.com:8000/abcdef0123456789"
@@ -123,6 +130,25 @@ function sbxPost(fields){
 	Object.keys(fields).forEach(function(k){ fd.append(k, fields[k]); });
 	return fetch(SBX_API, {method:'POST', body:fd, credentials:'same-origin'})
 		.then(function(r){ return r.json(); });
+}
+
+function sbxCopyServerCmd(){
+	var el = document.getElementById('sbx-srv-cmd');
+	var text = el.innerText || el.textContent;
+	if(navigator.clipboard && navigator.clipboard.writeText){
+		navigator.clipboard.writeText(text).then(function(){
+			alert('已复制');
+		}).catch(function(e){
+			alert('复制失败：' + e + '\n请手动选中命令后 Ctrl+C。');
+		});
+		return;
+	}
+	var r = document.createRange();
+	r.selectNodeContents(el);
+	var s = window.getSelection();
+	s.removeAllRanges();
+	s.addRange(r);
+	alert('当前页面不是 HTTPS，浏览器禁止写剪贴板。命令已选中，请按 Ctrl+C 复制。');
 }
 
 function sbxPaste(){
