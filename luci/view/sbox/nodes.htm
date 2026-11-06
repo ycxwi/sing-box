@@ -31,11 +31,15 @@
 	<h3>从安装链接安装</h3>
 	<div class="cbi-section-node">
 		<p style="color:#666">把服务端打印的一次性链接（<code>https://&lt;域名&gt;:8000/&lt;token&gt;</code>，30 分钟内单次有效）粘到这里，路由器自己下载、解包、安装。</p>
-		<div style="display:flex;gap:8px;align-items:stretch;margin:12px 0">
-			<input type="text" id="sbx-url" placeholder="https://example.com:8000/abcdef0123456789"
-				style="flex:1 1 auto;min-width:0;height:34px;padding:0 10px;border:1px solid #ccc;border-radius:4px;font-family:monospace;font-size:13px" />
-			<button class="cbi-button" type="button" onclick="sbxPaste()" title="从剪贴板读入（非 HTTPS 页面浏览器禁止，改用 Ctrl+V）">粘贴</button>
-			<button class="cbi-button cbi-button-apply" type="button" onclick="sbxInstallUrl()">下载并安装</button>
+		<div style="margin:12px 0">
+			<div style="display:flex">
+				<input type="text" id="sbx-url" placeholder="https://example.com:8000/abcdef0123456789"
+					style="flex:1 1 auto;min-width:0;height:34px;padding:0 10px;border:1px solid #ccc;border-radius:4px;font-family:monospace;font-size:13px" />
+			</div>
+			<div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-start">
+				<button class="cbi-button" type="button" onclick="sbxPaste()" title="从剪贴板读入（非 HTTPS 页面浏览器禁止，改用 Ctrl+V）">粘贴</button>
+				<button class="cbi-button cbi-button-apply" type="button" onclick="sbxInstallUrl()">下载并安装</button>
+			</div>
 		</div>
 		<pre id="sbx-url-out" style="display:none;white-space:pre-wrap;background:#f5f5f5;padding:8px;margin-top:8px"></pre>
 	</div>
