@@ -172,6 +172,8 @@ ssh root@<router> 'chmod 755 /usr/lib/lua/luci/controller/sbox.lua /usr/bin/sbox
 | 启停 | 按节点手动禁用/启用：禁用后该节点进程停止、socks 端口释放，其余节点照常跑 |
 | 激活 | 勾选某节点 = 切分流出口到它（单选，只改固定条目 auto，见下） |
 | 测速 | 每节点「测速」按钮 + 「一键测速」：经各节点 socks 出口打 `https://www.gstatic.com/generate_204`，行内显示毫秒延迟（两位小数，绿色；失败红字原因），无弹窗；一键=并发触发所有在线且启用节点，测完按钮自动恢复 |
+| 连通卡 | 顶部三卡（百度/谷歌/GitHub）：直连走系统路由（=分流规则），点卡检测、卡右侧一键全测；百度验直连链路、谷歌/GitHub 验代理链路 |
+| 改名 | 行内改名（输入框+✓✗）：自动同步三文件重命名、json 内证书路径重写、禁用标记、PassWall2 remarks/section、auto 卡显示名，并重启服务 |
 
 > 页面需要 LuCI 登录（同源 session），不提供任何免登录入口。
 
