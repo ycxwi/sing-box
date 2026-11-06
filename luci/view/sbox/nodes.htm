@@ -28,6 +28,9 @@
 					<div class="sbx-cc-v" style="color:#d9534f;font-size:15px;font-weight:600;margin-top:2px">点我检测</div>
 				</div>
 			</div>
+			<div style="display:flex;align-items:center">
+				<button class="cbi-button" id="sbx-cc-all" onclick="sbxConnAll()">一键测速</button>
+			</div>
 		</div>
 		<style>
 			/* 主题有 table{width:100%} 全局规则；id 优先级覆盖它，让列宽按内容自适应 */
@@ -247,6 +250,30 @@ function sbxInstallUrl(){
 			+ '\nPassWall2: ' + (d.pw2 || '');
 		sbxLoad();
 	}).catch(function(e){ out.textContent = '请求失败: ' + e; });
+}
+
+// 一键测速（三卡版）：并发触发三张连通卡，全部落定后按钮恢复（防重入）
+function sbxConnAll(){
+	var btn = document.getElementById('sbx-cc-all');
+	if(btn && btn.disabled){ return; }
+	var cards = [...document.querySelectorAll('.sbx-cc')].filter(function(c){
+		var v = c.querySelector('.sbx-cc-v');
+		return v && v.textContent !== '检测中…';
+	});
+	if(!cards.length){ return; }
+	if(btn){ btn.disabled = true; btn.textContent = '测速中…'; }
+	cards.forEach(function(c){ sbxConncheck(c); });
+	var done = 0;
+	cards.forEach(function(c){
+		var check = setInterval(function(){
+			var v = c.querySelector('.sbx-cc-v');
+			if(v && v.textContent !== '检测中…'){
+				clearInterval(check);
+				done++;
+				if(done === cards.length && btn){ btn.disabled = false; btn.textContent = '一键测速'; }
+			}
+		}, 300);
+	});
 }
 
 // 连通性卡片：点哪张测哪张（直连走系统路由=分流规则）
