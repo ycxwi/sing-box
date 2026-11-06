@@ -133,7 +133,15 @@ scp /tmp/client.pem root@<router>:/tmp/
 scp /tmp/client.key root@<router>:/tmp/
 ```
 
-**加设备**：用服务端的 CA（`/etc/sing-box/client-ca.pem` + `client-ca.key`）再签一张客户端证书即可，服务端无需改动。
+**加设备**：在**服务端**直接跑签发脚本（无参数，自动命名与落盘）：
+
+```sh
+sudo sh sign-client.sh
+```
+
+输出到 `/etc/sing-box/clients/client-<时间戳>.pem` + `.key`，并打印拷到设备的命令。同名（同一秒）重复执行会被拒绝，避免覆盖已分发证书。
+
+> 脚本会自动做 CA 验签，签发失败即报错退出。与首张客户端证书用的同一个 CA，新旧证书可以共存。
 
 ### 客户端管理
 
