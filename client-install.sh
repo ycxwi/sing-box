@@ -41,7 +41,11 @@ die() {
 [ -f "$CERT" ] || die "client certificate not found: $CERT"
 [ -f "$KEY" ] || die "client key not found: $KEY"
 
-for cmd in curl gzip uname mktemp; do
+# 离线安装（SB_BINARY）不需要 curl；默认路径才要
+if [ -z "${SB_BINARY:-}" ]; then
+    command -v curl >/dev/null 2>&1 || die "missing curl (set SB_BINARY for offline install)"
+fi
+for cmd in gzip uname mktemp; do
     command -v "$cmd" >/dev/null 2>&1 || die "missing required command: $cmd"
 done
 
@@ -55,14 +59,21 @@ esac
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-echo "[1/4] downloading $ASSET (static, musl-compatible)"
-curl -fsSL -L "https://github.com/$REPO/releases/download/$TAG/$ASSET" -o "$TMP/sb.gz" \
-    || die "download failed: $ASSET"
+if [ -n "${SB_BINARY:-}" ]; then
+    # 离线路径：直接用本机已有的静态二进制（不联网）
+    [ -f "$SB_BINARY" ] || die "SB_BINARY not found: $SB_BINARY"
+    echo "[1/4] using local binary: $SB_BINARY"
+    cp "$SB_BINARY" "$TMP/sb"
+else
+    echo "[1/4] downloading $ASSET (static, musl-compatible)"
+    curl -fsSL -L "https://github.com/$REPO/releases/download/$TAG/$ASSET" -o "$TMP/sb.gz" \
+        || die "download failed: $ASSET"
+    gzip -t "$TMP/sb.gz" || die "downloaded archive is corrupt"
+    gzip -dc "$TMP/sb.gz" > "$TMP/sb"
+fi
 
-echo "[2/4] verifying and installing binary"
-gzip -t "$TMP/sb.gz" || die "downloaded archive is corrupt"
-gzip -dc "$TMP/sb.gz" > "$TMP/sb"
 chmod 755 "$TMP/sb"
+echo "[2/4] installing binary"
 # busybox 没有 coreutils 的 install，用 cp + chmod
 cp "$TMP/sb" "$BIN"
 chmod 755 "$BIN"
@@ -147,7 +158,11 @@ chmod 755 /etc/init.d/sbox-client
 
 sleep 2
 /etc/init.d/sbox-client status >/dev/null 2>&1 || true
-ss -ltn 2>/dev/null | grep -q ":$SOCKS_PORT " || die "socks listener did not come up on port $SOCKS_PORT"
+# busybox 的 ss 对部分监听不显示（实测 1081/1085 都不显示但实际在监听），
+# 直接读内核表判断更可靠。
+PORT_HEX=$(printf '%04X' "$SOCKS_PORT")
+grep -q ":${PORT_HEX} " /proc/net/tcp 2>/dev/null \
+    || die "socks listener did not come up on port $SOCKS_PORT (checked /proc/net/tcp)"
 
 echo
 echo "done. client running, socks5 = 127.0.0.1:$SOCKS_PORT"
