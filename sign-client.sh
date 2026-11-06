@@ -90,6 +90,18 @@ if [ -f "$BASE/cert-port" ]; then
     [ -n "$P" ] && PORT=$P
 fi
 
+# 读 TUIC 连接参数（客户端配置必需四件：server/uuid/password/port）
+TUIC_PORT=$(sed -n 's/.*"port": *\([0-9]*\).*/\1/p' "$BASE/quick-state.json" | head -1)
+UUID=$(sed -n 's/.*"uuid": *"\([^"]*\)".*/\1/p' "$BASE/quick-state.json" | head -1)
+PASSWORD=$(sed -n 's/.*"password": *"\([^"]*\)".*/\1/p' "$BASE/quick-state.json" | head -1)
+
+echo
+echo "client params (pass these to the device):"
+echo "  server   = $DOMAIN"
+echo "  port     = $TUIC_PORT"
+echo "  uuid     = $UUID"
+echo "  password = $PASSWORD"
+
 echo
 echo "one-shot download (HTTPS, valid 30 min, single use):"
 echo "  https://$DOMAIN:$PORT/$TOKEN"

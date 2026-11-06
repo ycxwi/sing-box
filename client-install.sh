@@ -167,6 +167,12 @@ grep -q ":${PORT_HEX} " /proc/net/tcp 2>/dev/null \
 echo
 echo "done. client running, socks5 = 127.0.0.1:$SOCKS_PORT"
 echo
+echo "client params (for reference / adding other devices):"
+echo "  server   = $SERVER"
+echo "  port     = $PORT"
+echo "  uuid     = $UUID"
+echo "  password = $PASSWORD"
+echo
 echo "接到 PassWall2："
 echo "  节点类型：Socks"
 echo "  地址：127.0.0.1    端口：$SOCKS_PORT"
