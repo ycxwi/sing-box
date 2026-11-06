@@ -31,14 +31,11 @@
 	<h3>从安装链接安装</h3>
 	<div class="cbi-section-node">
 		<p style="color:#666">把服务端打印的一次性链接（<code>https://&lt;域名&gt;:8000/&lt;token&gt;</code>，30 分钟内单次有效）粘到这里，路由器自己下载、解包、安装。</p>
-		<div class="cbi-value">
-			<label class="cbi-value-title">安装链接</label>
-			<div class="cbi-value-field">
-				<input type="text" id="sbx-url" style="width:100%" placeholder="https://example.com:8000/abcdef0123456789" />
-			</div>
-		</div>
-		<div class="cbi-page-actions">
-			<button class="cbi-button cbi-button-apply" onclick="sbxInstallUrl()">下载并安装</button>
+		<div style="display:flex;gap:8px;align-items:stretch;margin:12px 0">
+			<input type="text" id="sbx-url" placeholder="https://example.com:8000/abcdef0123456789"
+				style="flex:1 1 auto;min-width:0;height:34px;padding:0 10px;border:1px solid #ccc;border-radius:4px;font-family:monospace;font-size:13px" />
+			<button class="cbi-button" type="button" onclick="sbxPaste()" title="从剪贴板读入（非 HTTPS 页面浏览器禁止，改用 Ctrl+V）">粘贴</button>
+			<button class="cbi-button cbi-button-apply" type="button" onclick="sbxInstallUrl()">下载并安装</button>
 		</div>
 		<pre id="sbx-url-out" style="display:none;white-space:pre-wrap;background:#f5f5f5;padding:8px;margin-top:8px"></pre>
 	</div>
@@ -122,6 +119,18 @@ function sbxPost(fields){
 	Object.keys(fields).forEach(function(k){ fd.append(k, fields[k]); });
 	return fetch(SBX_API, {method:'POST', body:fd, credentials:'same-origin'})
 		.then(function(r){ return r.json(); });
+}
+
+function sbxPaste(){
+	if(!navigator.clipboard || !navigator.clipboard.readText){
+		alert('当前页面不是 HTTPS（或浏览器不支持），系统禁止读取剪贴板。\n请点输入框后按 Ctrl+V 粘贴。');
+		return;
+	}
+	navigator.clipboard.readText().then(function(t){
+		document.getElementById('sbx-url').value = (t || '').trim();
+	}).catch(function(e){
+		alert('读取剪贴板被拒绝：' + e + '\n请点输入框后按 Ctrl+V 粘贴。');
+	});
 }
 
 function sbxInstallUrl(){
