@@ -245,6 +245,7 @@ function api_dispatch()
 		for _, ext in ipairs({ ".json", ".pem", ".key" }) do
 			os.remove(NODES_DIR .. "/" .. name .. ext)
 		end
+		os.remove("/etc/sbox-client/traffic/" .. name .. ".json")
 		local pw2 = pw2_remove(name)
 		local out = sys.exec(INIT .. " restart 2>&1") or ""
 		http.write(jsonc.stringify({ ok = true, pw2_removed = pw2, output = out }))
@@ -451,6 +452,10 @@ function api_dispatch()
 		end
 		if fs.access(DISABLED_DIR .. "/" .. old) then
 			os.rename(DISABLED_DIR .. "/" .. old, DISABLED_DIR .. "/" .. new)
+		end
+		-- 流量计数文件跟随改名（含历史基线，丢了日/30天统计就清零）
+		if fs.access("/etc/sbox-client/traffic/" .. old .. ".json") then
+			os.rename("/etc/sbox-client/traffic/" .. old .. ".json", "/etc/sbox-client/traffic/" .. new .. ".json")
 		end
 		-- PassWall2：remarks 必改；显式名 sbox_<old> 一并改名（同名冲突只改 remarks）
 		local rows = pw2_table()
